@@ -1,0 +1,14 @@
+let a = 3;
+print a + ~ b;
+
+if a == c {
+    print |b|;
+}
+
+if a == c {
+    print |b|;
+} else {
+    print |c|;
+}
+
+print |a| + ~|b-c|;

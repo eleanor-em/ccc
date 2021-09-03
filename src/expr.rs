@@ -9,12 +9,19 @@ const RESERVED_WORDS: &[&str] = &[
     "i",
     "let",
     "print",
+    // Below reserved for future use
+    "fn",
+    "void",
+    "ref",
+    "matrix",
+    "return",
 ];
 
 #[derive(Debug, Clone)]
 pub enum Expr {
     Value(Complex),
     Id(String),
+    Modulus(Box<Expr>),
     Plus(Box<(Expr, Expr)>),
     Times(Box<(Expr, Expr)>),
     Minus(Box<(Expr, Expr)>),
@@ -22,6 +29,8 @@ pub enum Expr {
     Negate(Box<Expr>),
     Conjugate(Box<Expr>),
     IfElse(Box<(Expr, Expr, Expr)>),
+    Equals(Box<(Expr, Expr)>),
+    NotEquals(Box<(Expr, Expr)>),
 }
 
 fn decimal(input: Span) -> IResult<Span> {
@@ -87,6 +96,13 @@ fn conj(input: Span) -> IResult<Expr> {
     )(input)
 }
 
+fn modulus(input: Span) -> IResult<Expr> {
+    map(
+        delimited(tag("|"), expression, tag("|")), 
+        |e| Expr::Modulus(Box::new(e))
+    )(input)
+}
+
 fn parens(input: Span) -> IResult<Expr> {
     delimited(multispace0, 
         delimited(tag("("), expression, tag(")")), 
@@ -97,6 +113,7 @@ fn factor(input: Span) -> IResult<Expr> {
     alt((ws(identifier_expr),
          ws(if_else),
          ws(value),
+         ws(modulus),
          ws(negate),
          ws(conj),
          parens))(input)
@@ -130,6 +147,20 @@ fn expr(input: Span) -> IResult<Expr> {
         })(input)
 }
 
+fn equality(input: Span) -> IResult<Expr> {
+    let (input, init) = expr(input)?;
+
+    fold_many0(
+        pair(alt((tag("=="), tag("!="))), term),
+        move || init.clone(),
+        |acc, (op, val): (Span, Expr)| {
+            match *op {
+                "==" => Expr::Equals(Box::new((acc, val))),
+                _    => Expr::NotEquals(Box::new((acc, val))),
+            }
+        })(input)
+}
+
 pub fn expression(input: Span) -> IResult<Expr> {
-    ws(expr)(input)
+    ws(equality)(input)
 }
