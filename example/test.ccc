@@ -11,4 +11,9 @@ if a == c {
     print |c|;
 }
 
-print |a| + ~|b-c|;
+print |a| + ~|b-c+3i|;
+
+while d {
+    print |d|;
+    d = d + 1 + i;
+}

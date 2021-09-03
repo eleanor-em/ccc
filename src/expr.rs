@@ -9,12 +9,14 @@ const RESERVED_WORDS: &[&str] = &[
     "i",
     "let",
     "print",
+    "while",
     // Below reserved for future use
     "fn",
     "void",
     "ref",
     "matrix",
     "return",
+    "pi",
 ];
 
 #[derive(Debug, Clone)]
