@@ -10,13 +10,15 @@ const RESERVED_WORDS: &[&str] = &[
     "let",
     "print",
     "while",
-    // Below reserved for future use
     "fn",
-    "void",
-    "ref",
+    "mut",
+    "break",
+    "continue",
+    // Below reserved for future use
     "matrix",
     "return",
     "pi",
+    "tau",
 ];
 
 #[derive(Debug, Clone)]
@@ -28,6 +30,7 @@ pub enum Expr {
     Times(Box<(Expr, Expr)>),
     Minus(Box<(Expr, Expr)>),
     Divide(Box<(Expr, Expr)>),
+    Remainder(Box<(Expr, Expr)>),
     Negate(Box<Expr>),
     Conjugate(Box<Expr>),
     IfElse(Box<(Expr, Expr, Expr)>),
@@ -66,7 +69,7 @@ fn value(input: Span) -> IResult<Expr> {
 pub fn identifier(input: Span) -> IResult<Span> {
     verify(recognize(pair(
         alt((alpha1, tag("_"))),
-        many0(alt((alphanumeric1, tag("_"))))
+        many0(alt((alphanumeric1, tag("_"), tag("'"))))
     )), |id: &Span| !RESERVED_WORDS.contains(id))(input)
 }
 
@@ -92,10 +95,14 @@ fn negate(input: Span) -> IResult<Expr> {
 }
 
 fn conj(input: Span) -> IResult<Expr> {
-    map(
-        preceded(tag("~"), factor), 
-        |e| Expr::Conjugate(Box::new(e))
-    )(input)
+    let (input, init) = basic_factor(input)?;
+
+    fold_many0(
+        tag("^"),
+        move || init.clone(),
+        |acc, _| {
+            Expr::Conjugate(Box::new(acc))
+        })(input)
 }
 
 fn modulus(input: Span) -> IResult<Expr> {
@@ -111,26 +118,32 @@ fn parens(input: Span) -> IResult<Expr> {
         multispace0)(input)
 }
 
-fn factor(input: Span) -> IResult<Expr> {
+/// Basic factor, used to remove left recursion from conjugation i.e. A -> A^
+fn basic_factor(input: Span) -> IResult<Expr> {
     alt((ws(identifier_expr),
          ws(if_else),
          ws(value),
          ws(modulus),
          ws(negate),
-         ws(conj),
          parens))(input)
+}
+
+/// Either a basic factor or a conjugated basic factor
+fn factor(input: Span) -> IResult<Expr> {
+    alt((ws(conj), basic_factor))(input)
 }
 
 fn term(input: Span) -> IResult<Expr> {
     let (input, init) = factor(input)?;
 
     fold_many0(
-        pair(alt((char('*'), char('/'))), factor),
+        pair(alt((char('*'), char('/'), char('%'))), factor),
         move || init.clone(),
         |acc, (op, val): (char, Expr)| {
             match op {
                 '*' => Expr::Times(Box::new((acc, val))),
-                _   => Expr::Divide(Box::new((acc, val))),
+                '/' => Expr::Divide(Box::new((acc, val))),
+                _   => Expr::Remainder(Box::new((acc, val))),
             }
         })(input)
 }
@@ -153,7 +166,7 @@ fn equality(input: Span) -> IResult<Expr> {
     let (input, init) = expr(input)?;
 
     fold_many0(
-        pair(alt((tag("=="), tag("!="))), term),
+        pair(alt((tag("=="), tag("!="))), expr),
         move || init.clone(),
         |acc, (op, val): (Span, Expr)| {
             match *op {

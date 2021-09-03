@@ -1,6 +1,6 @@
 fn main() {
     let mut n = 2;
-    let max = 100;
+    let max= 100;
 
     while n != max {
         -- The language has the fun side-effect of not allowing `i` as an iteration variable :D
@@ -13,9 +13,12 @@ fn main() {
             }
             k += 1;
         }
+        print k;
         -- TODO: String literals
         if found {
-            print k;
+            -- print " is prime";
+        } else {
+            -- print " is not prime";
         }
         n += 1;
     }

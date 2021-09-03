@@ -2,6 +2,7 @@ use nom::{bytes::complete::tag, character::complete::multispace0, sequence::deli
 use nom_locate::LocatedSpan;
 
 pub mod expr;
+pub mod func;
 pub mod statement;
 
 pub type Span<'a> = LocatedSpan<&'a str>;
