@@ -16,6 +16,13 @@ impl<T> Typed<T> {
     pub fn new(val: T, ty: Type) -> Self { Self(val, ty) }
     pub fn val(&self) -> &T { &self.0 }
     pub fn ty(&self) -> Type { self.1 }
+
+    pub fn mutable(&self) -> bool {
+        match self.1 {
+            Type::MutIntScalar | Type::MutScalar => true,
+            _ => false,
+        }
+    }
 }
 
 // Collects two LLVM IntValues into one object

@@ -12,6 +12,7 @@ pub enum CompileError {
     NotYetImplemented(String),
     UnknownSymbol(String),
     Unsupported(String),
+    Immutable(String),
 }
 
 impl fmt::Display for CompileError {

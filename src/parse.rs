@@ -116,7 +116,7 @@ fn conj(input: Span) -> IResult<Expr> {
         tag("^"),
         move || init.clone(),
         |acc, _| {
-            Expr::UnOp(UnOp::Negate, Box::new(acc))
+            Expr::UnOp(UnOp::Conjugate, Box::new(acc))
         })(input)
 }
 

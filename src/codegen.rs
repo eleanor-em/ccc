@@ -245,6 +245,22 @@ impl<'ctx> Compiler<'ctx> {
         Ok(())
     }
 
+    fn build_assign(&mut self, id: String, expr: Expr) -> Result<(), CompileError> {
+        let val = self.build_expr(expr)?;
+        
+        if let Some(var) = self.sym.var(&id) {
+            if var.mutable() {
+                self.builder.build_store(var.val().re, val.re);
+                self.builder.build_store(var.val().im, val.im);
+                Ok(())
+            } else {
+                Err(CompileError::Immutable(id))
+            }
+        } else {
+            Err(CompileError::UnknownSymbol(id))
+        }
+    }
+
     fn build_statement(&mut self, statement: Statement) -> Result<(), CompileError> {
         match statement {
             Statement::Let(name, expr) => self.build_let(name, expr),
@@ -253,6 +269,7 @@ impl<'ctx> Compiler<'ctx> {
             Statement::PrintLn(expr) => self.build_println(expr),
             Statement::PrintLit(val) => self.build_print_str(val),
             Statement::PrintLitLn(val) => self.build_println_str(val),
+            Statement::Assign(id, expr) => self.build_assign(id, expr),
             _ => Err(CompileError::not_yet_impl(format!("statement: {:?}", statement))),
         }
     }
