@@ -8,7 +8,7 @@ use nom::multi::fold_many0;
 use nom::sequence::{delimited, preceded};
 use nom::IResult;
 
-use crate::Span;
+use crate::{Span, error::ParseError};
 
 
 // parser combinators are constructed from the bottom up:
@@ -146,12 +146,8 @@ fn parse_string(input: &str) -> IResult<&str, String>
 }
 
 pub fn string_literal(input: Span) -> crate::IResult<String> {
-    let (input, res) = crate::util::parse_string(&input)
-        .map_err(|e| e.map(|nom::error::Error { input, code}| {
-            nom::error::Error {
-                input: Span::new(input),
-                code,
-            }
-        }))?;
-    Ok((Span::new(input), res))
+  match parse_string(&input) {
+    Ok((input, lit)) => Ok((Span::new(input), lit)),
+    Err(_) => Err(nom::Err::Error(ParseError::new(input, "invalid string literal".to_string())))
+  }
 }

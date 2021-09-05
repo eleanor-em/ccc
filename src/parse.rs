@@ -1,6 +1,6 @@
 use nom::{branch::alt, bytes::complete::{tag, take_until}, character::complete::{alpha1, alphanumeric1, char, multispace0, one_of}, combinator::{map, map_res, opt, recognize, verify}, multi::{fold_many0, many0, many1}, sequence::{delimited, pair, preceded, separated_pair, terminated}};
 
-use crate::{ComplexInt, IResult, Span, analyse::{Located, Location}, util::string_literal, ws, ws_tag};
+use crate::{ComplexInt, IResult, Span, analyse::{Located, Location}, error::ParseError, util::string_literal, ws, ws_tag};
 
 /* ----------------------------------------------------------------
     EXPRESSIONS
@@ -236,12 +236,33 @@ pub fn expression(input: Span) -> IResult<Located<Expr>> {
     STATEMENTS
    ---------------------------------------------------------------- */
 
+fn expect_semicolon(input: Span) -> IResult<()> {
+    match ws_tag(";")(input) {
+        Ok((input, _)) => Ok((input, ())),
+        Err(_) => Err(nom::Err::Failure(ParseError::new(input, "expecting `;`".to_string()))),
+    }
+}
+
+fn expect_open_brace(input: Span) -> IResult<()> {
+    match ws_tag("{")(input) {
+        Ok((input, _)) => Ok((input, ())),
+        Err(_) => Err(nom::Err::Failure(ParseError::new(input, "expecting `{`".to_string()))),
+    }
+}
+
+fn expect_close_brace(input: Span) -> IResult<()> {
+    match ws_tag("}")(input) {
+        Ok((input, _)) => Ok((input, ())),
+        Err(_) => Err(nom::Err::Failure(ParseError::new(input, "expecting `}`".to_string()))),
+    }
+}
+
 #[derive(Debug)]
 pub enum Statement {
-    Print(Located<Expr>),
     PrintLit(String),
-    PrintLn(Located<Expr>),
+    Print(Located<Expr>),
     PrintLitLn(String),
+    PrintLn(Located<Expr>),
     Let(String, Located<Expr>),
     LetMut(String, Located<Expr>),
     Assign(String, Located<Expr>),
@@ -273,7 +294,7 @@ fn parse_print_lit(input: Span) -> IResult<Statement> {
 
 fn parse_print_ln(input: Span) -> IResult<Statement> {
     map(
-        delimited(ws_tag("println"), expression, ws_tag(";")),
+        delimited(ws_tag("println"), expression, expect_semicolon),
         Statement::PrintLn
     )(input)
 }
@@ -289,7 +310,7 @@ fn parse_let(input: Span) -> IResult<Statement> {
     map(
         delimited(ws_tag("let"), 
             separated_pair(identifier, ws_tag("="), expression),
-            ws_tag(";")),
+            expect_semicolon),
         |(id, expr)| Statement::Let(id.to_string(), expr)
     )(input)
 }
@@ -305,51 +326,51 @@ fn parse_let_mut(input: Span) -> IResult<Statement> {
 
 fn parse_assign(input: Span) -> IResult<Statement> {
     map(
-        terminated(separated_pair(identifier, ws_tag("="), expression), ws_tag(";")),
+        terminated(separated_pair(identifier, ws_tag("="), expression), expect_semicolon),
         |(id, expr)| Statement::Assign(id.to_string(), expr)
     )(input)
 }
 
 fn parse_add_assign(input: Span) -> IResult<Statement> {
     map(
-        terminated(separated_pair(identifier, ws_tag("+="), expression), ws_tag(";")),
+        terminated(separated_pair(identifier, ws_tag("+="), expression), expect_semicolon),
         |(id, expr)| Statement::AddAssign(id.to_string(), expr)
     )(input)
 }
 
 fn parse_sub_assign(input: Span) -> IResult<Statement> {
     map(
-        terminated(separated_pair(identifier, ws_tag("-="), expression), ws_tag(";")),
+        terminated(separated_pair(identifier, ws_tag("-="), expression), expect_semicolon),
         |(id, expr)| Statement::SubAssign(id.to_string(), expr)
     )(input)
 }
 
 fn parse_mul_assign(input: Span) -> IResult<Statement> {
     map(
-        terminated(separated_pair(identifier, ws_tag("*="), expression), ws_tag(";")),
+        terminated(separated_pair(identifier, ws_tag("*="), expression), expect_semicolon),
         |(id, expr)| Statement::MulAssign(id.to_string(), expr)
     )(input)
 }
 
 fn parse_div_assign(input: Span) -> IResult<Statement> {
     map(
-        terminated(separated_pair(identifier, ws_tag("/="), expression), ws_tag(";")),
+        terminated(separated_pair(identifier, ws_tag("/="), expression), expect_semicolon),
         |(id, expr)| Statement::DivAssign(id.to_string(), expr)
     )(input)
 }
 
 fn parse_mod_assign(input: Span) -> IResult<Statement> {
     map(
-        terminated(separated_pair(identifier, ws_tag("%="), expression), ws_tag(";")),
+        terminated(separated_pair(identifier, ws_tag("%="), expression), expect_semicolon),
         |(id, expr)| Statement::ModAssign(id.to_string(), expr)
     )(input)
 }
 
 fn parse_if(input: Span) -> IResult<Statement> {
     map(
-        terminated(separated_pair(preceded(ws_tag("if"), expression), ws_tag("{"),
+        terminated(separated_pair(preceded(ws_tag("if"), expression), expect_open_brace,
         many0(statement)),
-        ws_tag("}")),
+        expect_close_brace),
         |(cond, body)| Statement::If(cond, body)
     )(input)
 }
@@ -357,9 +378,9 @@ fn parse_if(input: Span) -> IResult<Statement> {
 fn parse_if_else(input: Span) -> IResult<Statement> {
     map(
         separated_pair(
-            terminated(separated_pair(preceded(ws_tag("if"), expression), ws_tag("{"),
+            terminated(separated_pair(preceded(ws_tag("if"), expression), expect_open_brace,
             many0(statement)),
-            ws_tag("}")),
+            expect_close_brace),
                 ws_tag("else"),
                 delimited(ws_tag("{"), many0(statement), ws_tag("}"))),
         |((cond, body_if), body_else)| Statement::IfElse(cond, body_if, body_else)
@@ -368,17 +389,17 @@ fn parse_if_else(input: Span) -> IResult<Statement> {
 
 fn parse_while(input: Span) -> IResult<Statement> {
     map(
-        terminated(separated_pair(preceded(ws_tag("while"), expression), ws_tag("{"),
+        terminated(separated_pair(preceded(ws_tag("while"), expression), expect_open_brace,
         many0(statement)),
-        ws_tag("}")),
+        expect_close_brace),
         |(cond, body)| Statement::While(cond, body)
     )(input)
 }
 
 fn parse_keyword(input: Span) -> IResult<Statement> {
     alt((
-        map(terminated(ws_tag("break"), ws_tag(";")), |_| Statement::Break),
-        map(terminated(ws_tag("continue"), ws_tag(";")), |_| Statement::Continue),
+        map(terminated(ws_tag("break"), expect_semicolon), |_| Statement::Break),
+        map(terminated(ws_tag("continue"), expect_semicolon), |_| Statement::Continue),
     ))(input)
 }
 
@@ -417,10 +438,11 @@ pub struct Func {
 pub fn parse_all(input: Span) -> IResult<Func> {
     let (input, _) = ws_tag("fn")(input)?;
     let (input, name) = map(identifier, |s| *s)(input)?;
-    map(
-        delimited(preceded(ws_tag("()"), ws_tag("{")), 
-            many0(statement), 
-            ws_tag("}")),
+    let (input, func) = map(
+        preceded(preceded(ws_tag("()"), expect_open_brace),
+            many0(statement)),
         move |body| Func { name: name.to_string(), body }
-    )(input)
+    )(input)?;
+    let (input, _) = expect_close_brace(input)?;
+    Ok((input, func))
 }
