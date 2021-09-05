@@ -1,4 +1,9 @@
 fn main() {
-    let x = 3;
-    println x + 5;
+    let x = 3 + i;
+    println x * 2;
+    println (1 + i)*(1 + i);
+    print x;
+    println " test";
+    print "partial test";
+    println "";
 }

@@ -1,6 +1,6 @@
 use nom::{branch::alt, bytes::complete::tag, character::complete::{alpha1, alphanumeric1, char, multispace0, one_of}, combinator::{map, map_res, opt, recognize, verify}, multi::{fold_many0, many0, many1}, sequence::{delimited, pair, preceded, separated_pair, terminated}};
 
-use crate::{Complex, IResult, Span, ws};
+use crate::{ComplexInt, IResult, Span, ws};
 
 const RESERVED_WORDS: &[&str] = &[
     "if",
@@ -22,16 +22,21 @@ const RESERVED_WORDS: &[&str] = &[
     "tau",
 ];
 
+#[derive(Debug, Clone, Copy)]
+pub enum BinOp {
+    Plus,
+    Minus,
+    Times,
+    Divide,
+    Remainder,
+}
+
 #[derive(Debug, Clone)]
 pub enum Expr {
-    Value(Complex),
+    Value(ComplexInt),
     Id(String),
     Modulus(Box<Expr>),
-    Plus(Box<(Expr, Expr)>),
-    Times(Box<(Expr, Expr)>),
-    Minus(Box<(Expr, Expr)>),
-    Divide(Box<(Expr, Expr)>),
-    Remainder(Box<(Expr, Expr)>),
+    BinOp(BinOp, Box<(Expr, Expr)>),
     Negate(Box<Expr>),
     Conjugate(Box<Expr>),
     IfElse(Box<(Expr, Expr, Expr)>),
@@ -46,7 +51,7 @@ fn decimal(input: Span) -> IResult<Span> {
 fn real(input: Span) -> IResult<Expr> {
     map_res(
         decimal,
-        |s: Span| s.parse::<i64>().map(|val| Expr::Value(Complex(val, 0)))
+        |s: Span| s.parse::<i64>().map(|val| Expr::Value(ComplexInt(val, 0)))
     )(input)
 }
 
@@ -55,9 +60,9 @@ fn imag(input: Span) -> IResult<Expr> {
         terminated(recognize(opt(decimal)), tag("i")),
         |s: Span| {
             if s.is_empty() {
-                Ok(Expr::Value(Complex(0, 1)))
+                Ok(Expr::Value(ComplexInt(0, 1)))
             } else {
-                s.parse::<i64>().map(|val| Expr::Value(Complex(0, val)))
+                s.parse::<i64>().map(|val| Expr::Value(ComplexInt(0, val)))
             }
         }
     )(input)
@@ -141,11 +146,12 @@ fn term(input: Span) -> IResult<Expr> {
         pair(alt((char('*'), char('/'), char('%'))), factor),
         move || init.clone(),
         |acc, (op, val): (char, Expr)| {
-            match op {
-                '*' => Expr::Times(Box::new((acc, val))),
-                '/' => Expr::Divide(Box::new((acc, val))),
-                _   => Expr::Remainder(Box::new((acc, val))),
-            }
+            let op = match op {
+                '*' => BinOp::Times,
+                '/' => BinOp::Divide,
+                _   => BinOp::Remainder,
+            };
+            Expr::BinOp(op, Box::new((acc, val)))
         })(input)
 }
 
@@ -156,10 +162,11 @@ fn expr(input: Span) -> IResult<Expr> {
         pair(alt((char('+'), char('-'))), term),
         move || init.clone(),
         |acc, (op, val): (char, Expr)| {
-            match op {
-                '+' => Expr::Plus(Box::new((acc, val))),
-                _   => Expr::Minus(Box::new((acc, val))),
-            }
+                let op = match op {
+                    '+' => BinOp::Plus,
+                    _   => BinOp::Minus,
+                };
+                Expr::BinOp(op, Box::new((acc, val)))
         })(input)
 }
 

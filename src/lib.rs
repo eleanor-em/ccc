@@ -1,6 +1,8 @@
 use nom::{bytes::complete::tag, character::complete::multispace0, sequence::delimited};
 use nom_locate::LocatedSpan;
 
+pub mod analyse;
+pub mod builtins;
 pub mod codegen;
 pub mod error;
 pub mod expr;
@@ -12,7 +14,7 @@ pub type Span<'a> = LocatedSpan<&'a str>;
 pub type IResult<'a, O> = nom::IResult<Span<'a>, O>;
 
 #[derive(Debug, Clone, Copy)]
-pub struct Complex(i64, i64);
+pub struct ComplexInt(i64, i64);
 
 pub fn ws<'a, F: 'a, O>(f: F) -> impl FnMut(Span<'a>) -> IResult<O>
         where
