@@ -152,13 +152,13 @@ fn factor(input: Span) -> IResult<Located<Expr>> {
     alt((ws(conj), basic_factor))(input)
 }
 
-// TODO: This parses -2**3 as (-2)**3, which is... not ideal.
+/// TODO: This can't parse 2**-2. Could maybe be fixed by adding another negation case?
 fn exp_factor(input: Span) -> IResult<Located<Expr>> {
     // Need to do a right fold, but nom doesn't easily support that, so implement it ourselves
     let (input, init) = factor(input)?;
     let pos = init.at();
 
-    let (input, result) = many0(preceded(ws_tag("**"), factor))(input)?;
+    let (input, result) = many0(preceded(ws_tag("**"), negate))(input)?;
     
     let mut iter = result.into_iter().rev();
     if let Some(mut expr) = iter.next() {
@@ -173,10 +173,10 @@ fn exp_factor(input: Span) -> IResult<Located<Expr>> {
 
 fn negate(input: Span) -> IResult<Located<Expr>> {
     let pos = Location::from(&input);
-    map(
+    alt((map(
         preceded(tag("-"), exp_factor), 
         move |e| Located::new(Expr::UnOp(UnOp::Negate, Box::new(e)), pos)
-    )(input)
+    ), exp_factor))(input)
 }
 
 fn term(input: Span) -> IResult<Located<Expr>> {
