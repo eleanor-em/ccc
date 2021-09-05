@@ -168,6 +168,7 @@ impl<'ctx> Compiler<'ctx> {
                     BinOp::NotEquals => self.complex_icmp(IntPredicate::NE, lval, rval),
                     BinOp::Divide => Err(CompileError::not_yet_impl_dbg(op)),
                     BinOp::Remainder => Err(CompileError::not_yet_impl_dbg(op)),
+                    BinOp::Power => Err(CompileError::not_yet_impl_dbg(op)),
                 }
             },
             Expr::UnOp(op, expr) => {

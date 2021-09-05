@@ -33,6 +33,7 @@ pub enum BinOp {
     Times,
     Divide,
     Remainder,
+    Power,
     Equals,
     NotEquals,
 }
@@ -148,11 +149,26 @@ fn factor(input: Span) -> IResult<Expr> {
     alt((ws(conj), basic_factor))(input)
 }
 
-fn term(input: Span) -> IResult<Expr> {
+fn exp_factor(input: Span) -> IResult<Expr> {
+    // Need to do a right fold, but nom doesn't easily support that, so implement it ourselves
     let (input, init) = factor(input)?;
+    let (input, result) = many0(preceded(ws_tag("**"), factor))(input)?;
+    let mut iter = result.into_iter().rev();
+    if let Some(mut expr) = iter.next() {
+        for next in iter {
+            expr = Expr::BinOp(BinOp::Power, Box::new((next, expr)));
+        }
+        Ok((input, Expr::BinOp(BinOp::Power, Box::new((init, expr)))))
+    } else {
+        Ok((input, init))
+    }
+}
+
+fn term(input: Span) -> IResult<Expr> {
+    let (input, init) = exp_factor(input)?;
 
     fold_many0(
-        pair(alt((char('*'), char('/'), char('%'))), factor),
+        pair(alt((char('*'), char('/'), char('%'))), exp_factor),
         move || init.clone(),
         |acc, (op, val): (char, Expr)| {
             let op = match op {
