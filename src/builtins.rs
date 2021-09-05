@@ -101,7 +101,7 @@ impl<'ctx> Builtins<'ctx> {
         let f = self.sqrt.unwrap_or_else(|| {
             let t_f64 = self.ctx.f64_type();
             let fn_type = t_f64.fn_type(&[t_f64.into()], false);
-            self.module.add_function("sqrt", fn_type, Some(Linkage::External))
+            self.module.add_function("llvm.sqrt.f64", fn_type, Some(Linkage::External))
         });
         *self.sqrt.get_or_insert(f)
     }

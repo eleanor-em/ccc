@@ -6,7 +6,7 @@ This project implements (a subset of) the ℂ programming language. Some sample 
 1. `cargo run foo.ccc`
 2. `llc out/foo.ll`
 3. `as out/foo.s -o out/foo.o`
-4. `gcc -no-pie -lm -o out/foo out/foo.o`
+4. `gcc -no-pie -o out/foo out/foo.o`
 
 I've only tested it on Arch with an AMD CPU. If it doesn't work for you, sorry.
 
