@@ -9,6 +9,7 @@ const RESERVED_WORDS: &[&str] = &[
     "i",
     "let",
     "print",
+    "println",
     "while",
     "fn",
     "mut",

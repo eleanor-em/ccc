@@ -1,10 +1,13 @@
 use nom::{branch::alt, bytes::complete::{tag, take_until}, combinator::{map, opt}, multi::many0, sequence::{delimited, preceded, separated_pair, terminated}};
 
-use crate::{IResult, Span, expr::{Expr, expression, identifier}, ws_tag};
+use crate::{IResult, Span, expr::{Expr, expression, identifier}, util::string_literal, ws_tag};
 
 #[derive(Debug)]
 pub enum Statement {
     Print(Expr),
+    PrintLit(String),
+    PrintLn(Expr),
+    PrintLitLn(String),
     Let(String, Expr),
     LetMut(String, Expr),
     Assign(String, Expr),
@@ -27,21 +30,42 @@ fn parse_print(input: Span) -> IResult<Statement> {
     )(input)
 }
 
+fn parse_print_lit(input: Span) -> IResult<Statement> {
+    map(
+        delimited(ws_tag("print"), string_literal, ws_tag(";")),
+        Statement::PrintLit
+    )(input)
+}
+
+fn parse_print_ln(input: Span) -> IResult<Statement> {
+    map(
+        delimited(ws_tag("println"), expression, ws_tag(";")),
+        Statement::PrintLn
+    )(input)
+}
+
+fn parse_print_lit_ln(input: Span) -> IResult<Statement> {
+    map(
+        delimited(ws_tag("println"), string_literal, ws_tag(";")),
+        Statement::PrintLitLn
+    )(input)
+}
+
 fn parse_let(input: Span) -> IResult<Statement> {
     map(
         delimited(ws_tag("let"), 
-        separated_pair(identifier, ws_tag("="), expression),
-        ws_tag(";")),
-        |(id, expr)| Statement::Assign(id.to_string(), expr)
+            separated_pair(identifier, ws_tag("="), expression),
+            ws_tag(";")),
+        |(id, expr)| Statement::Let(id.to_string(), expr)
     )(input)
 }
 
 fn parse_let_mut(input: Span) -> IResult<Statement> {
     map(
         delimited(preceded(ws_tag("let"), ws_tag("mut")),
-        separated_pair(identifier, ws_tag("="), expression),
-        ws_tag(";")),
-        |(id, expr)| Statement::Assign(id.to_string(), expr)
+            separated_pair(identifier, ws_tag("="), expression),
+            ws_tag(";")),
+        |(id, expr)| Statement::LetMut(id.to_string(), expr)
     )(input)
 }
 
@@ -129,7 +153,10 @@ pub fn statement(input: Span) -> IResult<Statement> {
     let (input, _) = opt(preceded(tag("--"), take_until("\n")))(input)?;
 
     alt((parse_keyword,
+        parse_print_lit,
         parse_print,
+        parse_print_lit_ln,
+        parse_print_ln,
         parse_let_mut,
         parse_let,
         parse_while,

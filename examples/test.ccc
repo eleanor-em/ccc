@@ -13,9 +13,11 @@ fn main() {
             }
             k += 1;
         }
-        -- TODO: String literals
+        print k;
         if found {
-            print k;
+            println " is prime";
+        } else {
+            println " is not prime";
         }
         n += 1;
     }
