@@ -2,12 +2,12 @@ use std::{collections::HashMap, intrinsics::transmute, path::Path, rc::Rc};
 
 use inkwell::{IntPredicate, OptimizationLevel, basic_block::BasicBlock, builder::Builder, context::Context, execution_engine::JitFunction, module::Module, values::FunctionValue};
 
-use crate::{ComplexInt, analyse::{ComplexPointer, ComplexValue, Located, Type, Typed}, builtins::Builtins, error::CompileError, parse::{BinOp, Expr, UnOp, Func, Statement}};
+use crate::{ComplexInt, analyse::{Complex, ComplexPointer, ComplexValue, Located, Location, Type, Typed}, builtins::Builtins, error::{LocatedCompileError, InternalError}, parse::{BinOp, Expr, UnOp, Func, Statement}};
 
 struct SymbolTable<'ctx> {
     // TODO: function types
     func_map: HashMap<String, FunctionValue<'ctx>>,
-    var_map: HashMap<String, Typed<ComplexPointer<'ctx>>>,
+    var_map: HashMap<String, Located<Typed<ComplexPointer<'ctx>>>>,
 }
 
 impl<'ctx> SymbolTable<'ctx> {
@@ -23,11 +23,12 @@ impl<'ctx> SymbolTable<'ctx> {
         self.func_map.get(name)
     }
 
-    fn add_var(&mut self, name: String, ptr: ComplexPointer<'ctx>, ty: Type) {
-        self.var_map.insert(name, Typed::new(ptr, ty));
+    fn add_var(&mut self, name: Located<String>, ptr: ComplexPointer<'ctx>, ty: Type) {
+        let pos = name.pos();
+        self.var_map.insert(name.val(), Located::new(Typed::new(ptr, ty), pos));
     }
 
-    fn var(&self, name: &str) -> Option<&Typed<ComplexPointer<'ctx>>> {
+    fn var(&self, name: &str) -> Option<&Located<Typed<ComplexPointer<'ctx>>>> {
         self.var_map.get(name)
     }
 }
@@ -62,16 +63,16 @@ impl<'ctx> Compiler<'ctx> {
         }
     }
 
-    fn get_fp(&self) -> Result<FunctionValue<'ctx>, CompileError> {
-        self.current_fp.ok_or(CompileError::InvalidState("no active function"))
+    fn get_fp(&self) -> Result<FunctionValue<'ctx>, LocatedCompileError> {
+        self.current_fp.ok_or_else(|| InternalError::invalid_state("no active function"))
     }
 
-    fn get_entry_block(&self) -> Result<BasicBlock<'ctx>, CompileError> {
+    fn get_entry_block(&self) -> Result<BasicBlock<'ctx>, LocatedCompileError> {
         self.get_fp()?.get_first_basic_block()
-            .ok_or(CompileError::InvalidState("no blocks in active function"))
+            .ok_or_else(|| InternalError::invalid_state("no blocks in active function"))
     }
 
-    fn move_to_entry(&mut self) -> Result<(), CompileError> {
+    fn move_to_entry(&mut self) -> Result<(), LocatedCompileError> {
         let entry = self.get_entry_block()?;
         match entry.get_first_instruction() {
             Some(ins) => self.builder.position_before(&ins),
@@ -80,7 +81,7 @@ impl<'ctx> Compiler<'ctx> {
         Ok(())
     }
 
-    fn move_to_end(&mut self) -> Result<(), CompileError> {
+    fn move_to_end(&mut self) -> Result<(), LocatedCompileError> {
         self.builder.position_at_end(self.get_entry_block()?);
         Ok(())
     }
@@ -95,14 +96,14 @@ impl<'ctx> Compiler<'ctx> {
         ComplexValue { re, im }
     }
 
-    fn complex_icmp(&mut self, op: IntPredicate, lval: ComplexValue<'ctx>, rval: ComplexValue<'ctx>)
-            -> Result<ComplexValue<'ctx>, CompileError> {
+    fn complex_icmp(&mut self, pos: Location, op: IntPredicate, lval: ComplexValue<'ctx>, rval: ComplexValue<'ctx>)
+            -> Result<ComplexValue<'ctx>, LocatedCompileError> {
         let cmp1 = self.builder.build_int_compare(op, lval.re, rval.re, "tmp_icmp");
         let cmp2 = self.builder.build_int_compare(op, lval.im, rval.im, "tmp_icmp");
         let res = match op {
             IntPredicate::EQ => self.builder.build_and(cmp1, cmp2, "tmp_res"),
             IntPredicate::NE => self.builder.build_or(cmp1, cmp2, "tmp_res"),
-            _ => return Err(CompileError::unsupported(format!("{:?}", op)))
+            _ => return Err(LocatedCompileError::unsupported(pos, format!("{:?}", op)))
         };
         let res = self.builder.build_int_z_extend(res, self.ctx.i64_type(), "tmp_cast");
         Ok(ComplexValue {
@@ -116,14 +117,14 @@ impl<'ctx> Compiler<'ctx> {
         (val.re, self.builder.build_int_neg(val.im, "tmp_ineg")).into()
     }
 
-    fn complex_imodulus(&mut self, val: ComplexValue<'ctx>) -> Result<ComplexValue<'ctx>, CompileError> {
+    fn complex_imodulus(&mut self, val: ComplexValue<'ctx>) -> Result<ComplexValue<'ctx>, LocatedCompileError> {
         let conj = self.complex_conjugate(val);
         let modsq = self.complex_imul(val, conj).re;
         let isqrt = self.builtins.isqrt()?;
         self.move_to_end()?;
         let res = self.builder.build_call(isqrt, &[modsq.into()], "tmp_isqrt")
             .try_as_basic_value().left()
-                .ok_or(CompileError::InvalidState("failed to interpret return value of isqrt"))?
+                .ok_or_else(|| InternalError::invalid_state("failed to interpret return value of isqrt"))?
             .into_int_value();
         Ok(ComplexValue {
             re: res,
@@ -131,8 +132,8 @@ impl<'ctx> Compiler<'ctx> {
         })
     }
 
-    fn build_expr(&mut self, expr: Located<Expr>) -> Result<ComplexValue<'ctx>, CompileError> {
-        let (expr, _pos) = expr.unwrap();
+    fn build_expr(&mut self, expr: Located<Expr>) -> Result<ComplexValue<'ctx>, LocatedCompileError> {
+        let (expr, pos) = expr.unwrap();
         match expr {
             Expr::Value(ComplexInt(re, im)) => {
                 // Safety: always
@@ -145,21 +146,18 @@ impl<'ctx> Compiler<'ctx> {
                 }
             },
             Expr::Id(id) => {
-                if let Some(var) = self.sym.var(&id) {
-                    let re = self.builder.build_load(var.val().re, &name_re(&id))
+                if let Some(var) = self.sym.var(id.borrow_val()) {
+                    let re = self.builder.build_load(var.re(), &name_re(id.borrow_val()))
                         .into_int_value();
-                    let im = self.builder.build_load(var.val().im, &name_im(&id))
+                    let im = self.builder.build_load(var.im(), &name_im(id.borrow_val()))
                         .into_int_value();
                     Ok(ComplexValue { re, im })
                 } else {
-                    Err(CompileError::unknown_symbol(id))
+                    Err(LocatedCompileError::unknown_symbol(id))
                 }
             },
             Expr::BinOp(op, boxed) => {
                 let (lhs, rhs) = *boxed;
-                let _lhs_pos = lhs.at();
-                let _rhs_pos = rhs.at();
-
                 let lval = self.build_expr(lhs)?;
                 let rval = self.build_expr(rhs)?;
                 
@@ -169,11 +167,11 @@ impl<'ctx> Compiler<'ctx> {
                     BinOp::Minus => Ok((self.builder.build_int_sub(lval.re, rval.re, "tmp_isub_re"),
                                      self.builder.build_int_sub(lval.im, rval.im, "tmp_isub_im")).into()),
                     BinOp::Times => Ok(self.complex_imul(lval, rval)),
-                    BinOp::Equals => self.complex_icmp(IntPredicate::EQ, lval, rval),
-                    BinOp::NotEquals => self.complex_icmp(IntPredicate::NE, lval, rval),
-                    BinOp::Divide => Err(CompileError::not_yet_impl_dbg(op)),
-                    BinOp::Remainder => Err(CompileError::not_yet_impl_dbg(op)),
-                    BinOp::Power => Err(CompileError::not_yet_impl_dbg(op)),
+                    BinOp::Equals => self.complex_icmp(pos, IntPredicate::EQ, lval, rval),
+                    BinOp::NotEquals => self.complex_icmp(pos, IntPredicate::NE, lval, rval),
+                    BinOp::Divide => Err(LocatedCompileError::not_yet_impl_dbg(pos, op)),
+                    BinOp::Remainder => Err(LocatedCompileError::not_yet_impl_dbg(pos, op)),
+                    BinOp::Power => Err(LocatedCompileError::not_yet_impl_dbg(pos, op)),
                 }
             },
             Expr::UnOp(op, expr) => {
@@ -186,15 +184,15 @@ impl<'ctx> Compiler<'ctx> {
                 };
                 Ok(res)
             }
-            _ => Err(CompileError::not_yet_impl(format!("expression: {:?}", expr))),
+            _ => Err(LocatedCompileError::not_yet_impl(pos, format!("expression: {:?}", expr))),
         }
     }
 
-    fn build_let_general(&mut self, id: String, expr: Located<Expr>, ty: Type) -> Result<(), CompileError> {
+    fn build_let_general(&mut self, id: Located<String>, expr: Located<Expr>, ty: Type) -> Result<(), LocatedCompileError> {
         // allocate variable memory
         self.move_to_entry()?;
-        let re = self.builder.build_alloca(self.ctx.i64_type(), &name_re(&id));
-        let im = self.builder.build_alloca(self.ctx.i64_type(), &name_im(&id));
+        let re = self.builder.build_alloca(self.ctx.i64_type(), &name_re(id.borrow_val()));
+        let im = self.builder.build_alloca(self.ctx.i64_type(), &name_im(id.borrow_val()));
 
         // assign value
         let value = self.build_expr(expr)?;
@@ -207,15 +205,15 @@ impl<'ctx> Compiler<'ctx> {
 
     }
 
-    fn build_let(&mut self, id: String, expr: Located<Expr>) -> Result<(), CompileError> {
+    fn build_let(&mut self, id: Located<String>, expr: Located<Expr>) -> Result<(), LocatedCompileError> {
         self.build_let_general(id, expr, Type::IntScalar)
     }
 
-    fn build_let_mut(&mut self, id: String, expr: Located<Expr>) -> Result<(), CompileError> {
+    fn build_let_mut(&mut self, id: Located<String>, expr: Located<Expr>) -> Result<(), LocatedCompileError> {
         self.build_let_general(id, expr, Type::MutIntScalar)
     }
 
-    fn build_print(&mut self, expr: Located<Expr>) -> Result<(), CompileError> {
+    fn build_print(&mut self, expr: Located<Expr>) -> Result<(), LocatedCompileError> {
         let value = self.build_expr(expr)?;
         self.move_to_end()?;
         let f = self.builtins.print_int();
@@ -224,7 +222,7 @@ impl<'ctx> Compiler<'ctx> {
         Ok(())
     }
 
-    fn build_println(&mut self, expr: Located<Expr>) -> Result<(), CompileError> {
+    fn build_println(&mut self, expr: Located<Expr>) -> Result<(), LocatedCompileError> {
         let value = self.build_expr(expr)?;
         self.move_to_end()?;
         let f = self.builtins.println_int();
@@ -233,7 +231,7 @@ impl<'ctx> Compiler<'ctx> {
         Ok(())
     }
 
-    fn build_print_str(&mut self, value: String) -> Result<(), CompileError> {
+    fn build_print_str(&mut self, value: String) -> Result<(), LocatedCompileError> {
         self.move_to_end()?;
         let f = self.builtins.print_str();
         self.move_to_end()?;
@@ -242,7 +240,7 @@ impl<'ctx> Compiler<'ctx> {
         Ok(())
     }
 
-    fn build_println_str(&mut self, value: String) -> Result<(), CompileError> {
+    fn build_println_str(&mut self, value: String) -> Result<(), LocatedCompileError> {
         self.move_to_end()?;
         let f = self.builtins.println_str();
         self.move_to_end()?;
@@ -251,23 +249,24 @@ impl<'ctx> Compiler<'ctx> {
         Ok(())
     }
 
-    fn build_assign(&mut self, id: String, expr: Located<Expr>) -> Result<(), CompileError> {
+    fn build_assign(&mut self, id: Located<String>, expr: Located<Expr>) -> Result<(), LocatedCompileError> {
         let val = self.build_expr(expr)?;
 
-        if let Some(var) = self.sym.var(&id) {
-            if var.mutable() {
-                self.builder.build_store(var.val().re, val.re);
-                self.builder.build_store(var.val().im, val.im);
+        if let Some(var) = self.sym.var(id.borrow_val()) {
+            if var.borrow_val().mutable() {
+                self.builder.build_store(var.re(), val.re);
+                self.builder.build_store(var.im(), val.im);
                 Ok(())
             } else {
-                Err(CompileError::Immutable(id))
+                Err(LocatedCompileError::immutable(id, var.pos()))
             }
         } else {
-            Err(CompileError::UnknownSymbol(id))
+            Err(LocatedCompileError::unknown_symbol(id))
         }
     }
 
-    fn build_statement(&mut self, statement: Statement) -> Result<(), CompileError> {
+    fn build_statement(&mut self, statement: Located<Statement>) -> Result<(), LocatedCompileError> {
+        let (statement, pos) = statement.unwrap();
         match statement {
             Statement::Let(name, expr) => self.build_let(name, expr),
             Statement::LetMut(name, expr) => self.build_let_mut(name, expr),
@@ -276,11 +275,11 @@ impl<'ctx> Compiler<'ctx> {
             Statement::PrintLit(val) => self.build_print_str(val),
             Statement::PrintLitLn(val) => self.build_println_str(val),
             Statement::Assign(id, expr) => self.build_assign(id, expr),
-            _ => Err(CompileError::not_yet_impl(format!("statement: {:?}", statement))),
+            _ => Err(LocatedCompileError::not_yet_impl(pos, format!("statement: {:?}", statement))),
         }
     }
 
-    fn build_func(&mut self, func: Func) -> Result<(), CompileError> {
+    fn build_func(&mut self, func: Func) -> Result<(), LocatedCompileError> {
         let fn_type = self.ctx.void_type().fn_type(&[], false);
         let fp = self.module.add_function(&func.name, fn_type, None);
         self.sym.add_func(func.name, fp);
@@ -297,26 +296,26 @@ impl<'ctx> Compiler<'ctx> {
     }
 
     /// Prints the compiled LLVM IR to a file.
-    fn print_to_file<P: AsRef<Path>>(&self, dest: P) -> Result<(), CompileError> {
+    fn print_to_file<P: AsRef<Path>>(&self, dest: P) -> Result<(), LocatedCompileError> {
         self.module.verify()?;
         self.module.print_to_file(dest)?;
         Ok(())
     }
 
     /// Executes the compiled code. Fails if there is no `main` function defined.
-    fn exec(&self) -> Result<(), CompileError> {
+    fn exec(&self) -> Result<(), LocatedCompileError> {
         if self.sym.func("main").is_some() {
             let exec_engine = self.module.create_jit_execution_engine(OptimizationLevel::Aggressive)?;
             let exec: JitFunction<unsafe extern "C" fn()> = unsafe { exec_engine.get_function("main")? };
             unsafe { exec.call() };
             Ok(())
         } else {
-            Err(CompileError::NoMain)
+            Err(LocatedCompileError::no_main())
         }
     }
 }
 
-pub fn run<P: AsRef<Path>>(dest: P, func: Func) -> Result<(), CompileError> {
+pub fn run<P: AsRef<Path>>(dest: P, func: Func) -> Result<(), LocatedCompileError> {
     let ctx = Context::create();
     let mut gen = Compiler::new(&ctx);
     gen.build_func(func)?;

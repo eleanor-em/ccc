@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use inkwell::{builder::Builder, context::Context, module::{Linkage, Module}, values::{FunctionValue, InstructionOpcode}};
 
-use crate::error::CompileError;
+use crate::error::{InternalError, LocatedCompileError};
 
 pub struct Builtins<'ctx> {
     ctx: &'ctx Context,
@@ -106,9 +106,9 @@ impl<'ctx> Builtins<'ctx> {
         *self.sqrt.get_or_insert(f)
     }
 
-    pub fn isqrt(&mut self) -> Result<FunctionValue<'ctx>, CompileError> {
+    pub fn isqrt(&mut self) -> Result<FunctionValue<'ctx>, LocatedCompileError> {
         let sqrt = self.sqrt();
-        let f: Result<_, CompileError> = self.isqrt
+        let f: Result<_, LocatedCompileError> = self.isqrt
             .map(Ok)
             .unwrap_or_else(|| {
                 let t_f64 = self.ctx.f64_type();
@@ -123,7 +123,7 @@ impl<'ctx> Builtins<'ctx> {
                     .into_float_value();
                 let res = self.builder.build_call(sqrt, &[xf.into()], "call")
                     .try_as_basic_value().left()
-                    .ok_or(CompileError::InvalidState("failed to interpret return value of sqrt"))?
+                    .ok_or_else(|| InternalError::invalid_state("failed to interpret return value of sqrt"))?
                     .into_float_value();
                 let res = self.builder.build_cast(InstructionOpcode::FPToSI, res, t_i64, "tmp_cast")
                     .into_int_value();

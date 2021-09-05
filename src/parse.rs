@@ -48,7 +48,7 @@ pub enum UnOp {
 #[derive(Debug, Clone)]
 pub enum Expr {
     Value(ComplexInt),
-    Id(String),
+    Id(Located<String>),
     BinOp(BinOp, Box<(Located<Expr>, Located<Expr>)>),
     UnOp(UnOp, Box<Located<Expr>>),
     IfElse(Box<(Located<Expr>, Located<Expr>, Located<Expr>)>),
@@ -96,7 +96,7 @@ pub fn identifier(input: Span) -> IResult<Span> {
 
 fn identifier_expr(input: Span) -> IResult<Located<Expr>> {
     let pos = Location::from(&input);
-    map(identifier, move |id: Span| Located::new(Expr::Id(id.to_string()), pos))(input)
+    map(identifier, move |id: Span| Located::new(Expr::Id(Located::new(id.to_string(), pos)), pos))(input)
 }
 
 fn if_else(input: Span) -> IResult<Located<Expr>> {
@@ -114,7 +114,7 @@ fn if_else(input: Span) -> IResult<Located<Expr>> {
 
 fn conj(input: Span) -> IResult<Located<Expr>> {
     let (input, init) = basic_factor(input)?;
-    let pos = init.at();
+    let pos = init.pos();
 
     fold_many0(
         tag("^"),
@@ -156,7 +156,7 @@ fn factor(input: Span) -> IResult<Located<Expr>> {
 fn exp_factor(input: Span) -> IResult<Located<Expr>> {
     // Need to do a right fold, but nom doesn't easily support that, so implement it ourselves
     let (input, init) = factor(input)?;
-    let pos = init.at();
+    let pos = init.pos();
 
     let (input, result) = many0(preceded(ws_tag("**"), negate))(input)?;
     
@@ -182,7 +182,7 @@ fn negate(input: Span) -> IResult<Located<Expr>> {
 fn term(input: Span) -> IResult<Located<Expr>> {
     let mut fac = alt((ws(negate), exp_factor));
     let (input, init) = fac(input)?;
-    let pos = init.at();
+    let pos = init.pos();
 
     fold_many0(
         pair(alt((char('*'), char('/'), char('%'))), fac),
@@ -199,7 +199,7 @@ fn term(input: Span) -> IResult<Located<Expr>> {
 
 fn expr(input: Span) -> IResult<Located<Expr>> {
     let (input, init) = term(input)?;
-    let pos = init.at();
+    let pos = init.pos();
 
     fold_many0(
         pair(alt((char('+'), char('-'))), term),
@@ -215,7 +215,7 @@ fn expr(input: Span) -> IResult<Located<Expr>> {
 
 fn equality(input: Span) -> IResult<Located<Expr>> {
     let (input, init) = expr(input)?;
-    let pos = init.at();
+    let pos = init.pos();
 
     fold_many0(
         pair(alt((tag("=="), tag("!="))), expr),
@@ -257,23 +257,23 @@ fn expect_close_brace(input: Span) -> IResult<()> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Statement {
     PrintLit(String),
     Print(Located<Expr>),
     PrintLitLn(String),
     PrintLn(Located<Expr>),
-    Let(String, Located<Expr>),
-    LetMut(String, Located<Expr>),
-    Assign(String, Located<Expr>),
-    AddAssign(String, Located<Expr>),
-    SubAssign(String, Located<Expr>),
-    MulAssign(String, Located<Expr>),
-    DivAssign(String, Located<Expr>),
-    ModAssign(String, Located<Expr>),
-    If(Located<Expr>, Vec<Statement>),
-    IfElse(Located<Expr>, Vec<Statement>, Vec<Statement>),
-    While(Located<Expr>, Vec<Statement>),
+    Let(Located<String>, Located<Expr>),
+    LetMut(Located<String>, Located<Expr>),
+    Assign(Located<String>, Located<Expr>),
+    AddAssign(Located<String>, Located<Expr>),
+    SubAssign(Located<String>, Located<Expr>),
+    MulAssign(Located<String>, Located<Expr>),
+    DivAssign(Located<String>, Located<Expr>),
+    ModAssign(Located<String>, Located<Expr>),
+    If(Located<Expr>, Vec<Located<Statement>>),
+    IfElse(Located<Expr>, Vec<Located<Statement>>, Vec<Located<Statement>>),
+    While(Located<Expr>, Vec<Located<Statement>>),
     Break,
     Continue,
 }
@@ -311,7 +311,7 @@ fn parse_let(input: Span) -> IResult<Statement> {
         delimited(ws_tag("let"), 
             separated_pair(identifier, ws_tag("="), expression),
             expect_semicolon),
-        |(id, expr)| Statement::Let(id.to_string(), expr)
+        |(id, expr)| Statement::Let(Located::new(id.to_string(), Location::from(&id)), expr),
     )(input)
 }
 
@@ -320,49 +320,49 @@ fn parse_let_mut(input: Span) -> IResult<Statement> {
         delimited(preceded(ws_tag("let"), ws_tag("mut")),
             separated_pair(identifier, ws_tag("="), expression),
             ws_tag(";")),
-        |(id, expr)| Statement::LetMut(id.to_string(), expr)
+        |(id, expr)| Statement::LetMut(Located::new(id.to_string(), Location::from(&id)), expr)
     )(input)
 }
 
 fn parse_assign(input: Span) -> IResult<Statement> {
     map(
         terminated(separated_pair(identifier, ws_tag("="), expression), expect_semicolon),
-        |(id, expr)| Statement::Assign(id.to_string(), expr)
+        |(id, expr)| Statement::Assign(Located::new(id.to_string(), Location::from(&id)), expr)
     )(input)
 }
 
 fn parse_add_assign(input: Span) -> IResult<Statement> {
     map(
         terminated(separated_pair(identifier, ws_tag("+="), expression), expect_semicolon),
-        |(id, expr)| Statement::AddAssign(id.to_string(), expr)
+        |(id, expr)| Statement::AddAssign(Located::new(id.to_string(), Location::from(&id)), expr)
     )(input)
 }
 
 fn parse_sub_assign(input: Span) -> IResult<Statement> {
     map(
         terminated(separated_pair(identifier, ws_tag("-="), expression), expect_semicolon),
-        |(id, expr)| Statement::SubAssign(id.to_string(), expr)
+        |(id, expr)| Statement::SubAssign(Located::new(id.to_string(), Location::from(&id)), expr)
     )(input)
 }
 
 fn parse_mul_assign(input: Span) -> IResult<Statement> {
     map(
         terminated(separated_pair(identifier, ws_tag("*="), expression), expect_semicolon),
-        |(id, expr)| Statement::MulAssign(id.to_string(), expr)
+        |(id, expr)| Statement::MulAssign(Located::new(id.to_string(), Location::from(&id)), expr)
     )(input)
 }
 
 fn parse_div_assign(input: Span) -> IResult<Statement> {
     map(
         terminated(separated_pair(identifier, ws_tag("/="), expression), expect_semicolon),
-        |(id, expr)| Statement::DivAssign(id.to_string(), expr)
+        |(id, expr)| Statement::DivAssign(Located::new(id.to_string(), Location::from(&id)), expr)
     )(input)
 }
 
 fn parse_mod_assign(input: Span) -> IResult<Statement> {
     map(
         terminated(separated_pair(identifier, ws_tag("%="), expression), expect_semicolon),
-        |(id, expr)| Statement::ModAssign(id.to_string(), expr)
+        |(id, expr)| Statement::ModAssign(Located::new(id.to_string(), Location::from(&id)), expr)
     )(input)
 }
 
@@ -403,11 +403,12 @@ fn parse_keyword(input: Span) -> IResult<Statement> {
     ))(input)
 }
 
-fn statement(input: Span) -> IResult<Statement> {
+fn statement(input: Span) -> IResult<Located<Statement>> {
     // Throw away comments
     let (input, _) = opt(preceded(tag("--"), take_until("\n")))(input)?;
+    let pos = Location::from(&input);
 
-    alt((parse_keyword,
+    let (input, statement) = alt((parse_keyword,
         parse_print_lit_ln,
         parse_print_ln,
         parse_print_lit,
@@ -422,7 +423,8 @@ fn statement(input: Span) -> IResult<Statement> {
         parse_sub_assign,
         parse_mul_assign,
         parse_div_assign,
-        parse_mod_assign))(input)
+        parse_mod_assign))(input)?;
+    Ok((input, Located::new(statement, pos)))
 }
 
 /* ----------------------------------------------------------------
@@ -432,7 +434,7 @@ fn statement(input: Span) -> IResult<Statement> {
 #[derive(Debug)]
 pub struct Func {
     pub name: String,
-    pub body: Vec<Statement>
+    pub body: Vec<Located<Statement>>
 }
 
 pub fn parse_all(input: Span) -> IResult<Func> {

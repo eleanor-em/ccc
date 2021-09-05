@@ -2,7 +2,7 @@ use std::{error::Error, fmt};
 
 use inkwell::{execution_engine::FunctionLookupError, support::LLVMString};
 
-use crate::Span;
+use crate::{Span, analyse::{Located, Location}};
 
 /// From https://iximiuz.com/en/posts/rust-writing-parsers-with-nom/
 #[derive(Debug, PartialEq)]
@@ -23,7 +23,7 @@ impl<'a> ParseError<'a> {
     pub fn col(&self) -> usize { self.span().get_utf8_column() }
 
     pub fn msg(&self) -> Option<&str> {
-        self.message.as_ref().map(|s| s.as_str())
+        self.message.as_deref()
     }
 }
 
@@ -60,10 +60,41 @@ impl<'a, E: Error> nom::error::FromExternalError<Span<'a>, E> for ParseError<'a>
 }
 
 #[derive(Debug)]
-pub enum CompileError {
+pub enum InternalError {
     InvalidState(&'static str),
     Llvm(LLVMString),
     Lookup(FunctionLookupError),
+}
+
+impl fmt::Display for InternalError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            // LLVMString escapes the newlines, unhelpfully.
+            Self::Llvm(s) => write!(f, "LLVM error:\n{}", s.to_string().replace("\\n", "\n")),
+            _ => write!(f, "{:?}", self),
+        }
+    }
+}
+
+impl Error for InternalError {}
+
+impl InternalError {
+    pub fn invalid_state(msg: &'static str) -> LocatedCompileError {
+        LocatedCompileError::from_err(CompileError::Internal(Self::InvalidState(msg)))
+    }
+
+    pub fn llvm(llvm_str: LLVMString) -> LocatedCompileError {
+        LocatedCompileError::from_err(CompileError::Internal(Self::Llvm(llvm_str)))
+    }
+
+    pub fn lookup(err: FunctionLookupError) -> LocatedCompileError {
+        LocatedCompileError::from_err(CompileError::Internal(Self::Lookup(err)))
+    }
+}
+
+#[derive(Debug)]
+pub enum CompileError {
+    Internal(InternalError),
     NoMain,
     NotYetImplemented(String),
     UnknownSymbol(String),
@@ -74,8 +105,7 @@ pub enum CompileError {
 impl fmt::Display for CompileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            // LLVMString escapes the newlines, unhelpfully.
-            Self::Llvm(s) => write!(f, "LLVM error:\n{}", s.to_string().replace("\\n", "\n")),
+            Self::Internal(e) => write!(f, "{}", e),
             _ => write!(f, "{:?}", self),
         }
     }
@@ -83,31 +113,81 @@ impl fmt::Display for CompileError {
 
 impl Error for CompileError {}
 
-impl From<LLVMString> for CompileError {
+#[derive(Debug)]
+pub struct LocatedCompileError {
+    pub pos: Option<Location>,
+    err: CompileError,
+    pub secondary_pos: Option<Location>,
+    pub secondary_msg: Option<String>,
+}
+
+impl fmt::Display for LocatedCompileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.err {
+            CompileError::Internal(err) => {
+                write!(f, "internal compiler error: {}", err)
+            },
+            CompileError::NoMain => {
+                write!(f, "missing `main` function")
+            },
+            CompileError::NotYetImplemented(msg)
+                | CompileError::UnknownSymbol(msg)
+                | CompileError::Unsupported(msg)
+                | CompileError::Immutable(msg) => {
+                write!(f, "{}", msg)
+            },
+        }
+    }
+}
+
+impl From<LLVMString> for LocatedCompileError {
     fn from(e: LLVMString) -> Self {
-        Self::Llvm(e)
+        InternalError::llvm(e)
     }
 }
 
-impl From<FunctionLookupError> for CompileError {
+impl From<FunctionLookupError> for LocatedCompileError {
     fn from(e: FunctionLookupError) -> Self {
-        Self::Lookup(e)
+        InternalError::lookup(e)
     }
 }
 
-impl CompileError {
-    pub fn not_yet_impl<T: fmt::Display>(meta: T) -> CompileError {
-        Self::NotYetImplemented(format!("not yet implemented: {}", meta))
-    }
-    pub fn not_yet_impl_dbg<T: fmt::Debug>(meta: T) -> CompileError {
-        Self::NotYetImplemented(format!("not yet implemented: {:?}", meta))
+impl LocatedCompileError {
+    fn from_err(err: CompileError) -> Self{
+        Self { pos: None, err, secondary_msg: None, secondary_pos: None }
     }
 
-    pub fn unknown_symbol(symbol: String) -> CompileError {
-        Self::UnknownSymbol(format!("unknown symbol `{}`", symbol))
+    fn new(pos: Location, err: CompileError) -> Self {
+        Self { pos: Some(pos), err, secondary_msg: None, secondary_pos: None }
     }
 
-    pub fn unsupported(meta: String) -> CompileError {
-        Self::UnknownSymbol(format!("unsupported operation: {}", meta))
+    fn with_secondary(pos: Location, err: CompileError, secondary_msg: String, secondary_pos: Location) -> Self {
+        Self { pos: Some(pos), err, secondary_msg: Some(secondary_msg), secondary_pos: Some(secondary_pos) }
+    }
+
+    pub fn not_yet_impl<T: fmt::Display>(pos: Location, meta: T) -> LocatedCompileError {
+        Self::new(pos, CompileError::NotYetImplemented(format!("not yet implemented: {}", meta)))
+    }
+    pub fn not_yet_impl_dbg<T: fmt::Debug>(pos: Location, meta: T) -> LocatedCompileError {
+        Self::new(pos, CompileError::NotYetImplemented(format!("not yet implemented: {:?}", meta)))
+    }
+
+    pub fn unsupported(pos: Location, meta: String) -> LocatedCompileError {
+        Self::new(pos, CompileError::Unsupported(format!("unsupported operation: {}", meta)))
+    }
+
+    pub fn immutable(id: Located<String>, decl: Location) -> LocatedCompileError {
+        Self::with_secondary(id.pos(),
+            CompileError::Immutable(format!("attempted to mutate `{}`", id.borrow_val())),
+            format!("`{}` declared here:", id.val()),
+            decl)
+    }
+
+    pub fn unknown_symbol(id: Located<String>) -> LocatedCompileError {
+        Self::new(id.pos(), CompileError::UnknownSymbol(format!("unknown symbol: `{}`", id.val())))
+    }
+
+    pub fn no_main() -> LocatedCompileError {
+        Self::new(Location { line: 0, col: 0 }, CompileError::NoMain)
     }
 }
