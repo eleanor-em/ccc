@@ -10,4 +10,4 @@ This project implements (a subset of) the ℂ programming language. Some sample 
 I've only tested it on Arch with an AMD CPU. If it doesn't work for you, sorry.
 
 ## Why?
-It seemed like a good idea at the time. ¯\_(ツ)_/¯
+It seemed like a good idea at the time. ¯\\_(ツ)_/¯
