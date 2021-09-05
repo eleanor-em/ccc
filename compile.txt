@@ -1,0 +1,5 @@
+To fully compile:
+1. ccc foo.ccc
+2. llc out/foo.ll
+3. as out/foo.s -o out/foo.o
+4. gcc -no-pie -o out/foo out/foo.o
