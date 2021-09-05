@@ -100,10 +100,10 @@ impl<'ctx> Compiler<'ctx> {
     }
 }
 
-pub fn run() -> Result<(), CompileError> {
+pub fn run(dest: &str) -> Result<(), CompileError> {
     let ctx = Context::create();
     let mut gen = Compiler::new(&ctx);
     gen.add_test();
-    gen.print_to_file("out/test.ll")?;
+    gen.print_to_file(dest)?;
     gen.exec()
 }
