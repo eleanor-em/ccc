@@ -5,7 +5,7 @@ It's a language where the only types are "complex number" and "matrix of complex
 This project implements (a subset of) the ℂ programming language. Some sample files are located in `examples/`. The Cargo project produces LLVM IR and dumps it in `out/`, then executes it with a JIT.
 
 ## How?
-Make sure you've installed LLVM 12 through your packager manager. To fully compile source code:
+Make sure you've installed LLVM 12 through your package manager. To fully compile source code:
 1. `cargo run foo.ccc`
 2. `llc out/foo.ll`
 3. `as out/foo.s -o out/foo.o`
