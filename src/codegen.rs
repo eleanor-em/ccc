@@ -81,7 +81,8 @@ impl<'ctx> Compiler<'ctx> {
     }
 
     fn move_to_end(&mut self) -> Result<(), CompileError> {
-        Ok(self.builder.position_at_end(self.get_entry_block()?))
+        self.builder.position_at_end(self.get_entry_block()?);
+        Ok(())
     }
 
     fn complex_imul(&self, lval: ComplexValue<'ctx>, rval: ComplexValue<'ctx>) -> ComplexValue<'ctx> {
@@ -101,7 +102,7 @@ impl<'ctx> Compiler<'ctx> {
         let res = match op {
             IntPredicate::EQ => self.builder.build_and(cmp1, cmp2, "tmp_res"),
             IntPredicate::NE => self.builder.build_or(cmp1, cmp2, "tmp_res"),
-            _ => Err(CompileError::unsupported(format!("{:?}", op)))?,
+            _ => return Err(CompileError::unsupported(format!("{:?}", op)))
         };
         let res = self.builder.build_int_z_extend(res, self.ctx.i64_type(), "tmp_cast");
         Ok(ComplexValue {
@@ -157,18 +158,17 @@ impl<'ctx> Compiler<'ctx> {
                 let (lhs, rhs) = *boxed;
                 let lval = self.build_expr(lhs)?;
                 let rval = self.build_expr(rhs)?;
-                let res = match op {
-                    BinOp::Plus => (self.builder.build_int_add(lval.re, rval.re, "tmp_iadd_re"),
-                                    self.builder.build_int_add(lval.im, rval.im, "tmp_iadd_im")).into(),
-                    BinOp::Minus => (self.builder.build_int_sub(lval.re, rval.re, "tmp_isub_re"),
-                                     self.builder.build_int_sub(lval.im, rval.im, "tmp_isub_im")).into(),
-                    BinOp::Times => self.complex_imul(lval, rval),
-                    BinOp::Equals => self.complex_icmp(IntPredicate::EQ, lval, rval)?,
-                    BinOp::NotEquals => self.complex_icmp(IntPredicate::NE, lval, rval)?,
-                    BinOp::Divide => Err(CompileError::not_yet_impl_dbg(op))?,
-                    BinOp::Remainder => Err(CompileError::not_yet_impl_dbg(op))?,
-                };
-                Ok(res)
+                match op {
+                    BinOp::Plus => Ok((self.builder.build_int_add(lval.re, rval.re, "tmp_iadd_re"),
+                                    self.builder.build_int_add(lval.im, rval.im, "tmp_iadd_im")).into()),
+                    BinOp::Minus => Ok((self.builder.build_int_sub(lval.re, rval.re, "tmp_isub_re"),
+                                     self.builder.build_int_sub(lval.im, rval.im, "tmp_isub_im")).into()),
+                    BinOp::Times => Ok(self.complex_imul(lval, rval)),
+                    BinOp::Equals => self.complex_icmp(IntPredicate::EQ, lval, rval),
+                    BinOp::NotEquals => self.complex_icmp(IntPredicate::NE, lval, rval),
+                    BinOp::Divide => Err(CompileError::not_yet_impl_dbg(op)),
+                    BinOp::Remainder => Err(CompileError::not_yet_impl_dbg(op)),
+                }
             },
             Expr::UnOp(op, expr) => {
                 let val = self.build_expr(*expr)?;
@@ -247,7 +247,7 @@ impl<'ctx> Compiler<'ctx> {
 
     fn build_assign(&mut self, id: String, expr: Expr) -> Result<(), CompileError> {
         let val = self.build_expr(expr)?;
-        
+
         if let Some(var) = self.sym.var(&id) {
             if var.mutable() {
                 self.builder.build_store(var.val().re, val.re);
@@ -299,7 +299,7 @@ impl<'ctx> Compiler<'ctx> {
 
     /// Executes the compiled code. Fails if there is no `main` function defined.
     fn exec(&self) -> Result<(), CompileError> {
-        if let Some(_) = self.sym.func("main") {
+        if self.sym.func("main").is_some() {
             let exec_engine = self.module.create_jit_execution_engine(OptimizationLevel::Aggressive)?;
             let exec: JitFunction<unsafe extern "C" fn()> = unsafe { exec_engine.get_function("main")? };
             unsafe { exec.call() };

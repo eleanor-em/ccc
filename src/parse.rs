@@ -347,7 +347,7 @@ fn parse_keyword(input: Span) -> IResult<Statement> {
     ))(input)
 }
 
-pub fn statement(input: Span) -> IResult<Statement> {
+fn statement(input: Span) -> IResult<Statement> {
     // Throw away comments
     let (input, _) = opt(preceded(tag("--"), take_until("\n")))(input)?;
 

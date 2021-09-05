@@ -109,7 +109,7 @@ impl<'ctx> Builtins<'ctx> {
     pub fn isqrt(&mut self) -> Result<FunctionValue<'ctx>, CompileError> {
         let sqrt = self.sqrt();
         let f: Result<_, CompileError> = self.isqrt
-            .map(|val| Ok(val))
+            .map(Ok)
             .unwrap_or_else(|| {
                 let t_f64 = self.ctx.f64_type();
                 let t_i64 = self.ctx.i64_type();

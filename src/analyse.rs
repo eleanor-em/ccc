@@ -18,10 +18,7 @@ impl<T> Typed<T> {
     pub fn ty(&self) -> Type { self.1 }
 
     pub fn mutable(&self) -> bool {
-        match self.1 {
-            Type::MutIntScalar | Type::MutScalar => true,
-            _ => false,
-        }
+        matches!(self.1, Type::MutIntScalar | Type::MutScalar)
     }
 }
 

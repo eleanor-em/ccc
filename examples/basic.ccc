@@ -1,18 +1,6 @@
 fn main() {
-    let mut x = 3 + i;
+    let mut x = 3 + 2i;
     x = 1 + i;
-
-    println x * 2;
-    println x^;
     println x^ * 2;
-    println (1 + i)*(1 + i);
-    print x;
-    println " test";
-    print "partial test";
-    println "";
-
-    println i == i + 1;
-    println -i == i;
-    println -i == i^;
-    println |1 + i|;
+    println |x|;
 }

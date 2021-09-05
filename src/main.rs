@@ -12,7 +12,8 @@ fn main() {
     let filename = args[1].as_str();
 
     let text = fs::read_to_string(filename)
-        .expect(&format!("Could not read file: {}", filename));
+        // Clippy: https://rust-lang.github.io/rust-clippy/master/index.html#expect_fun_call
+        .unwrap_or_else(|_| panic!("Could not read file: {}", filename));
 
     // Figure out the "raw name" (without path or extension)
     let path_index = filename.find('/').map(|x| x + 1).unwrap_or(0);
@@ -25,7 +26,7 @@ fn main() {
     fs::create_dir_all("out")
         .expect("Failed to create `out` directory");
     fs::write(&ast_dest, format!("{:#?}", parsed))
-        .expect(&format!("Failed to write AST output to {}", ast_dest));
+        .unwrap_or_else(|_| panic!("Failed to write AST output to {}", ast_dest));
     
     let llvm_dest = format!("out/{}.ll", raw_filename);
     match codegen::run(&llvm_dest, parsed) {

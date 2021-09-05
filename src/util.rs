@@ -18,7 +18,7 @@ use crate::Span;
 /// Parse a unicode sequence, of the form u{XXXX}, where XXXX is 1 to 6
 /// hexadecimal numerals. We will combine this later with parse_escaped_char
 /// to parse sequences like \u{00AC}.
-fn parse_unicode<'a>(input: &'a str) -> IResult<&'a str, char>
+fn parse_unicode(input: &str) -> IResult<&str, char>
 {
   // `take_while_m_n` parses between `m` and `n` bytes (inclusive) that match
   // a predicate. `parse_hex` here parses between 1 and 6 hexadecimal numerals.
@@ -43,11 +43,11 @@ fn parse_unicode<'a>(input: &'a str) -> IResult<&'a str, char>
   // the function returns None, map_opt returns an error. In this case, because
   // not all u32 values are valid unicode code points, we have to fallibly
   // convert to char with from_u32.
-  map_opt(parse_u32, |value| std::char::from_u32(value))(input)
+  map_opt(parse_u32, std::char::from_u32)(input)
 }
 
 /// Parse an escaped character: \n, \t, \r, \u{00AC}, etc.
-fn parse_escaped_char<'a>(input: &'a str) -> IResult<&'a str, char>
+fn parse_escaped_char(input: &str) -> IResult<&str, char>
 {
   preceded(
     char('\\'),
@@ -73,14 +73,14 @@ fn parse_escaped_char<'a>(input: &'a str) -> IResult<&'a str, char>
 
 /// Parse a backslash, followed by any amount of whitespace. This is used later
 /// to discard any escaped whitespace.
-fn parse_escaped_whitespace<'a>(
-  input: &'a str,
-) -> IResult<&'a str, &'a str> {
+fn parse_escaped_whitespace(
+  input: &str,
+) -> IResult<&str, &str> {
   preceded(char('\\'), multispace1)(input)
 }
 
 /// Parse a non-empty block of text that doesn't include \ or "
-fn parse_literal<'a>(input: &'a str) -> IResult<&'a str, &'a str> {
+fn parse_literal(input: &str) -> IResult<&str, &str> {
   // `is_not` parses a string of 0 or more characters that aren't one of the
   // given characters.
   let not_quote_slash = is_not("\"\\");
@@ -104,7 +104,7 @@ enum StringFragment<'a> {
 
 /// Combine parse_literal, parse_escaped_whitespace, and parse_escaped_char
 /// into a StringFragment.
-fn parse_fragment<'a>(input: &'a str) -> IResult<&'a str, StringFragment<'a>>
+fn parse_fragment(input: &str) -> IResult<&str, StringFragment>
 {
   alt((
     // The `map` combinator runs a parser, then applies a function to the output
@@ -117,7 +117,7 @@ fn parse_fragment<'a>(input: &'a str) -> IResult<&'a str, StringFragment<'a>>
 
 /// Parse a string. Use a loop of parse_fragment and push all of the fragments
 /// into an output string.
-fn parse_string<'a>(input: &'a str) -> IResult<&'a str, String>
+fn parse_string(input: &str) -> IResult<&str, String>
 {
   // fold_many0 is the equivalent of iterator::fold. It runs a parser in a loop,
   // and for each output value, calls a folding function on each output value.
