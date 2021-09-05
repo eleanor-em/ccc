@@ -2,7 +2,7 @@ use std::{collections::HashMap, intrinsics::transmute, path::Path, rc::Rc};
 
 use inkwell::{IntPredicate, OptimizationLevel, basic_block::BasicBlock, builder::Builder, context::Context, execution_engine::JitFunction, module::Module, values::FunctionValue};
 
-use crate::{ComplexInt, analyse::{ComplexPointer, ComplexValue, Type, Typed}, builtins::Builtins, error::CompileError, parse::{BinOp, Expr, UnOp, Func, Statement}};
+use crate::{ComplexInt, analyse::{ComplexPointer, ComplexValue, Located, Type, Typed}, builtins::Builtins, error::CompileError, parse::{BinOp, Expr, UnOp, Func, Statement}};
 
 struct SymbolTable<'ctx> {
     // TODO: function types
@@ -131,7 +131,8 @@ impl<'ctx> Compiler<'ctx> {
         })
     }
 
-    fn build_expr(&mut self, expr: Expr) -> Result<ComplexValue<'ctx>, CompileError> {
+    fn build_expr(&mut self, expr: Located<Expr>) -> Result<ComplexValue<'ctx>, CompileError> {
+        let (expr, _pos) = expr.unwrap();
         match expr {
             Expr::Value(ComplexInt(re, im)) => {
                 // Safety: always
@@ -156,8 +157,12 @@ impl<'ctx> Compiler<'ctx> {
             },
             Expr::BinOp(op, boxed) => {
                 let (lhs, rhs) = *boxed;
+                let _lhs_pos = lhs.at();
+                let _rhs_pos = rhs.at();
+
                 let lval = self.build_expr(lhs)?;
                 let rval = self.build_expr(rhs)?;
+                
                 match op {
                     BinOp::Plus => Ok((self.builder.build_int_add(lval.re, rval.re, "tmp_iadd_re"),
                                     self.builder.build_int_add(lval.im, rval.im, "tmp_iadd_im")).into()),
@@ -185,14 +190,14 @@ impl<'ctx> Compiler<'ctx> {
         }
     }
 
-    fn build_let_general(&mut self, id: String, value: Expr, ty: Type) -> Result<(), CompileError> {
+    fn build_let_general(&mut self, id: String, expr: Located<Expr>, ty: Type) -> Result<(), CompileError> {
         // allocate variable memory
         self.move_to_entry()?;
         let re = self.builder.build_alloca(self.ctx.i64_type(), &name_re(&id));
         let im = self.builder.build_alloca(self.ctx.i64_type(), &name_im(&id));
 
         // assign value
-        let value = self.build_expr(value)?;
+        let value = self.build_expr(expr)?;
         self.builder.build_store(re, value.re);
         self.builder.build_store(im, value.im);
 
@@ -202,16 +207,16 @@ impl<'ctx> Compiler<'ctx> {
 
     }
 
-    fn build_let(&mut self, id: String, value: Expr) -> Result<(), CompileError> {
-        self.build_let_general(id, value, Type::IntScalar)
+    fn build_let(&mut self, id: String, expr: Located<Expr>) -> Result<(), CompileError> {
+        self.build_let_general(id, expr, Type::IntScalar)
     }
 
-    fn build_let_mut(&mut self, id: String, value: Expr) -> Result<(), CompileError> {
-        self.build_let_general(id, value, Type::MutIntScalar)
+    fn build_let_mut(&mut self, id: String, expr: Located<Expr>) -> Result<(), CompileError> {
+        self.build_let_general(id, expr, Type::MutIntScalar)
     }
 
-    fn build_print(&mut self, value: Expr) -> Result<(), CompileError> {
-        let value = self.build_expr(value)?;
+    fn build_print(&mut self, expr: Located<Expr>) -> Result<(), CompileError> {
+        let value = self.build_expr(expr)?;
         self.move_to_end()?;
         let f = self.builtins.print_int();
         self.move_to_end()?;
@@ -219,8 +224,8 @@ impl<'ctx> Compiler<'ctx> {
         Ok(())
     }
 
-    fn build_println(&mut self, value: Expr) -> Result<(), CompileError> {
-        let value = self.build_expr(value)?;
+    fn build_println(&mut self, expr: Located<Expr>) -> Result<(), CompileError> {
+        let value = self.build_expr(expr)?;
         self.move_to_end()?;
         let f = self.builtins.println_int();
         self.move_to_end()?;
@@ -246,7 +251,7 @@ impl<'ctx> Compiler<'ctx> {
         Ok(())
     }
 
-    fn build_assign(&mut self, id: String, expr: Expr) -> Result<(), CompileError> {
+    fn build_assign(&mut self, id: String, expr: Located<Expr>) -> Result<(), CompileError> {
         let val = self.build_expr(expr)?;
 
         if let Some(var) = self.sym.var(&id) {

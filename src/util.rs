@@ -145,7 +145,6 @@ fn parse_string(input: &str) -> IResult<&str, String>
   delimited(char('"'), build_string, char('"'))(input)
 }
 
-
 pub fn string_literal(input: Span) -> crate::IResult<String> {
     let (input, res) = crate::util::parse_string(&input)
         .map_err(|e| e.map(|nom::error::Error { input, code}| {

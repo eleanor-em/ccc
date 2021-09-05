@@ -1,5 +1,37 @@
 use inkwell::values::{IntValue, PointerValue};
 
+use crate::Span;
+
+#[derive(Debug, Clone, Copy)]
+pub struct Location {
+    pub line: usize,
+    pub col: usize,
+}
+
+impl From<&Span<'_>> for Location {
+    fn from(span: &Span) -> Self {
+        Self {
+            line: span.location_line() as usize,
+            col: span.get_column(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Located<T: Clone>(T, Location);
+
+impl<T: Clone> Located<T> {
+    pub fn new(val: T, at: Location) -> Self {
+        Self(val, at)
+    }
+
+    pub fn val_ref(&self) -> &T { &self.0 }
+    pub fn val(self) -> T { self.0 }
+    pub fn at(&self) -> Location { self.1 }
+
+    pub fn unwrap(self) -> (T, Location) { (self.0, self.1) }
+}
+
 // Value types
 #[derive(Debug, Clone, Copy)]
 pub enum Type {

@@ -1,6 +1,6 @@
 use nom::{branch::alt, bytes::complete::{tag, take_until}, character::complete::{alpha1, alphanumeric1, char, multispace0, one_of}, combinator::{map, map_res, opt, recognize, verify}, multi::{fold_many0, many0, many1}, sequence::{delimited, pair, preceded, separated_pair, terminated}};
 
-use crate::{ComplexInt, IResult, Span, util::string_literal, ws, ws_tag};
+use crate::{ComplexInt, IResult, Span, analyse::{Located, Location}, util::string_literal, ws, ws_tag};
 
 /* ----------------------------------------------------------------
     EXPRESSIONS
@@ -49,24 +49,28 @@ pub enum UnOp {
 pub enum Expr {
     Value(ComplexInt),
     Id(String),
-    BinOp(BinOp, Box<(Expr, Expr)>),
-    UnOp(UnOp, Box<Expr>),
-    IfElse(Box<(Expr, Expr, Expr)>),
+    BinOp(BinOp, Box<(Located<Expr>, Located<Expr>)>),
+    UnOp(UnOp, Box<Located<Expr>>),
+    IfElse(Box<(Located<Expr>, Located<Expr>, Located<Expr>)>),
 }
 
 fn decimal(input: Span) -> IResult<Span> {
     recognize(many1(terminated(one_of("0123456789"), many0(tag("_")))))(input)
 }
 
-fn real(input: Span) -> IResult<Expr> {
+fn real(input: Span) -> IResult<Located<Expr>> {
+    let pos = Location::from(&input);
     map_res(
         decimal,
-        |s: Span| s.parse::<i64>().map(|val| Expr::Value(ComplexInt(val, 0)))
+        move |s: Span| s.parse::<i64>().map(|val| {
+            Located::new(Expr::Value(ComplexInt(val, 0)), pos)
+        })
     )(input)
 }
 
-fn imag(input: Span) -> IResult<Expr> {
-    map_res(
+fn imag(input: Span) -> IResult<Located<Expr>> {
+    let pos = Location::from(&input);
+    let (input, res) = map_res(
         terminated(recognize(opt(decimal)), tag("i")),
         |s: Span| {
             if s.is_empty() {
@@ -75,10 +79,11 @@ fn imag(input: Span) -> IResult<Expr> {
                 s.parse::<i64>().map(|val| Expr::Value(ComplexInt(0, val)))
             }
         }
-    )(input)
+    )(input)?;
+    Ok((input, Located::new(res, pos)))
 }
 
-fn value(input: Span) -> IResult<Expr> {
+fn value(input: Span) -> IResult<Located<Expr>> {
     alt((imag, real))(input)
 }
 
@@ -89,53 +94,60 @@ pub fn identifier(input: Span) -> IResult<Span> {
     )), |id: &Span| !RESERVED_WORDS.contains(id))(input)
 }
 
-fn identifier_expr(input: Span) -> IResult<Expr> {
-    map(identifier, |id: Span| Expr::Id(id.to_string()))(input)
+fn identifier_expr(input: Span) -> IResult<Located<Expr>> {
+    let pos = Location::from(&input);
+    map(identifier, move |id: Span| Located::new(Expr::Id(id.to_string()), pos))(input)
 }
 
-fn if_else(input: Span) -> IResult<Expr> {
+fn if_else(input: Span) -> IResult<Located<Expr>> {
+    let pos = Location::from(&input);
     map(
         preceded(tag("if"),
                        separated_pair(separated_pair(expression, tag("then"), expression),
                        tag("else"),
                        expression)),
-        |((cond, e_if), e_else)| Expr::IfElse(Box::new((cond, e_if, e_else))) 
+        move |((cond, e_if), e_else)| {
+            Located::new(Expr::IfElse(Box::new((cond, e_if, e_else))), pos)
+        } 
     )(input)
 }
 
-fn negate(input: Span) -> IResult<Expr> {
+fn negate(input: Span) -> IResult<Located<Expr>> {
+    let pos = Location::from(&input);
     map(
         preceded(tag("-"), factor), 
-        |e| Expr::UnOp(UnOp::Negate, Box::new(e))
+        move |e| Located::new(Expr::UnOp(UnOp::Negate, Box::new(e)), pos)
     )(input)
 }
 
-fn conj(input: Span) -> IResult<Expr> {
+fn conj(input: Span) -> IResult<Located<Expr>> {
     let (input, init) = basic_factor(input)?;
+    let pos = init.at();
 
     fold_many0(
         tag("^"),
         move || init.clone(),
-        |acc, _| {
-            Expr::UnOp(UnOp::Conjugate, Box::new(acc))
+        move |acc, _| {
+            Located::new(Expr::UnOp(UnOp::Conjugate, Box::new(acc)), pos)
         })(input)
 }
 
-fn modulus(input: Span) -> IResult<Expr> {
+fn modulus(input: Span) -> IResult<Located<Expr>> {
+    let pos = Location::from(&input);
     map(
         delimited(tag("|"), expression, tag("|")), 
-        |e| Expr::UnOp(UnOp::Modulus, Box::new(e))
+        move |e| Located::new(Expr::UnOp(UnOp::Modulus, Box::new(e)), pos)
     )(input)
 }
 
-fn parens(input: Span) -> IResult<Expr> {
+fn parens(input: Span) -> IResult<Located<Expr>> {
     delimited(multispace0, 
         delimited(tag("("), expression, tag(")")), 
         multispace0)(input)
 }
 
 /// Basic factor, used to remove left recursion from conjugation i.e. A -> A^
-fn basic_factor(input: Span) -> IResult<Expr> {
+fn basic_factor(input: Span) -> IResult<Located<Expr>> {
     alt((ws(identifier_expr),
          ws(if_else),
          ws(value),
@@ -145,72 +157,78 @@ fn basic_factor(input: Span) -> IResult<Expr> {
 }
 
 /// Either a basic factor or a conjugated basic factor
-fn factor(input: Span) -> IResult<Expr> {
+fn factor(input: Span) -> IResult<Located<Expr>> {
     alt((ws(conj), basic_factor))(input)
 }
 
-fn exp_factor(input: Span) -> IResult<Expr> {
+fn exp_factor(input: Span) -> IResult<Located<Expr>> {
     // Need to do a right fold, but nom doesn't easily support that, so implement it ourselves
     let (input, init) = factor(input)?;
+    let pos = init.at();
+
     let (input, result) = many0(preceded(ws_tag("**"), factor))(input)?;
+    
     let mut iter = result.into_iter().rev();
     if let Some(mut expr) = iter.next() {
         for next in iter {
-            expr = Expr::BinOp(BinOp::Power, Box::new((next, expr)));
+            expr = Located::new(Expr::BinOp(BinOp::Power, Box::new((next, expr))), pos);
         }
-        Ok((input, Expr::BinOp(BinOp::Power, Box::new((init, expr)))))
+        Ok((input, Located::new(Expr::BinOp(BinOp::Power, Box::new((init, expr))), pos)))
     } else {
         Ok((input, init))
     }
 }
 
-fn term(input: Span) -> IResult<Expr> {
+fn term(input: Span) -> IResult<Located<Expr>> {
     let (input, init) = exp_factor(input)?;
+    let pos = init.at();
 
     fold_many0(
         pair(alt((char('*'), char('/'), char('%'))), exp_factor),
         move || init.clone(),
-        |acc, (op, val): (char, Expr)| {
+        move |acc, (op, val): (char, Located<Expr>)| {
             let op = match op {
                 '*' => BinOp::Times,
                 '/' => BinOp::Divide,
                 _   => BinOp::Remainder,
             };
-            Expr::BinOp(op, Box::new((acc, val)))
+            Located::new(Expr::BinOp(op, Box::new((acc, val))), pos)
         })(input)
 }
 
-fn expr(input: Span) -> IResult<Expr> {
+fn expr(input: Span) -> IResult<Located<Expr>> {
     let (input, init) = term(input)?;
+    let pos = init.at();
 
     fold_many0(
         pair(alt((char('+'), char('-'))), term),
         move || init.clone(),
-        |acc, (op, val): (char, Expr)| {
+        move |acc, (op, val): (char, Located<Expr>)| {
                 let op = match op {
                     '+' => BinOp::Plus,
                     _   => BinOp::Minus,
                 };
-                Expr::BinOp(op, Box::new((acc, val)))
+                Located::new(Expr::BinOp(op, Box::new((acc, val))), pos)
         })(input)
 }
 
-fn equality(input: Span) -> IResult<Expr> {
+fn equality(input: Span) -> IResult<Located<Expr>> {
     let (input, init) = expr(input)?;
+    let pos = init.at();
 
     fold_many0(
         pair(alt((tag("=="), tag("!="))), expr),
         move || init.clone(),
-        |acc, (op, val): (Span, Expr)| {
+        move |acc, (op, val): (Span, Located<Expr>)| {
             let op = match *op {
                 "==" => BinOp::Equals,
                 _    => BinOp::NotEquals,
             };
-            Expr::BinOp(op, Box::new((acc, val)))
+            Located::new(Expr::BinOp(op, Box::new((acc, val))), pos)
         })(input)
 }
 
-pub fn expression(input: Span) -> IResult<Expr> {
+pub fn expression(input: Span) -> IResult<Located<Expr>> {
     ws(equality)(input)
 }
 /* ----------------------------------------------------------------
@@ -219,21 +237,21 @@ pub fn expression(input: Span) -> IResult<Expr> {
 
 #[derive(Debug)]
 pub enum Statement {
-    Print(Expr),
+    Print(Located<Expr>),
     PrintLit(String),
-    PrintLn(Expr),
+    PrintLn(Located<Expr>),
     PrintLitLn(String),
-    Let(String, Expr),
-    LetMut(String, Expr),
-    Assign(String, Expr),
-    AddAssign(String, Expr),
-    SubAssign(String, Expr),
-    MulAssign(String, Expr),
-    DivAssign(String, Expr),
-    ModAssign(String, Expr),
-    If(Expr, Vec<Statement>),
-    IfElse(Expr, Vec<Statement>, Vec<Statement>),
-    While(Expr, Vec<Statement>),
+    Let(String, Located<Expr>),
+    LetMut(String, Located<Expr>),
+    Assign(String, Located<Expr>),
+    AddAssign(String, Located<Expr>),
+    SubAssign(String, Located<Expr>),
+    MulAssign(String, Located<Expr>),
+    DivAssign(String, Located<Expr>),
+    ModAssign(String, Located<Expr>),
+    If(Located<Expr>, Vec<Statement>),
+    IfElse(Located<Expr>, Vec<Statement>, Vec<Statement>),
+    While(Located<Expr>, Vec<Statement>),
     Break,
     Continue,
 }
