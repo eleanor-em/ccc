@@ -112,14 +112,6 @@ fn if_else(input: Span) -> IResult<Located<Expr>> {
     )(input)
 }
 
-fn negate(input: Span) -> IResult<Located<Expr>> {
-    let pos = Location::from(&input);
-    map(
-        preceded(tag("-"), factor), 
-        move |e| Located::new(Expr::UnOp(UnOp::Negate, Box::new(e)), pos)
-    )(input)
-}
-
 fn conj(input: Span) -> IResult<Located<Expr>> {
     let (input, init) = basic_factor(input)?;
     let pos = init.at();
@@ -152,7 +144,6 @@ fn basic_factor(input: Span) -> IResult<Located<Expr>> {
          ws(if_else),
          ws(value),
          ws(modulus),
-         ws(negate),
          parens))(input)
 }
 
@@ -161,6 +152,7 @@ fn factor(input: Span) -> IResult<Located<Expr>> {
     alt((ws(conj), basic_factor))(input)
 }
 
+// TODO: This parses -2**3 as (-2)**3, which is... not ideal.
 fn exp_factor(input: Span) -> IResult<Located<Expr>> {
     // Need to do a right fold, but nom doesn't easily support that, so implement it ourselves
     let (input, init) = factor(input)?;
@@ -179,12 +171,21 @@ fn exp_factor(input: Span) -> IResult<Located<Expr>> {
     }
 }
 
+fn negate(input: Span) -> IResult<Located<Expr>> {
+    let pos = Location::from(&input);
+    map(
+        preceded(tag("-"), exp_factor), 
+        move |e| Located::new(Expr::UnOp(UnOp::Negate, Box::new(e)), pos)
+    )(input)
+}
+
 fn term(input: Span) -> IResult<Located<Expr>> {
-    let (input, init) = exp_factor(input)?;
+    let mut fac = alt((ws(negate), exp_factor));
+    let (input, init) = fac(input)?;
     let pos = init.at();
 
     fold_many0(
-        pair(alt((char('*'), char('/'), char('%'))), exp_factor),
+        pair(alt((char('*'), char('/'), char('%'))), fac),
         move || init.clone(),
         move |acc, (op, val): (char, Located<Expr>)| {
             let op = match op {

@@ -1,5 +1,7 @@
 fn main() {
-    let mut x = 3 + 2i;
+    let mut x = 3 + -2i;
+    println x;
+    println x^;
     x = 1 + i;
     println x^ * 2;
     println |x|;

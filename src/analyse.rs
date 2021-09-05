@@ -25,11 +25,10 @@ impl<T: Clone> Located<T> {
         Self(val, at)
     }
 
-    pub fn val_ref(&self) -> &T { &self.0 }
     pub fn val(self) -> T { self.0 }
-    pub fn at(&self) -> Location { self.1 }
-
     pub fn unwrap(self) -> (T, Location) { (self.0, self.1) }
+    
+    pub fn at(&self) -> Location { self.1 }
 }
 
 // Value types
