@@ -1,6 +1,6 @@
 use std::{env, fs};
 
-use ccomp::{Span, codegen, func::func};
+use ccomp::{Span, codegen, parse::parse_all};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -19,7 +19,7 @@ fn main() {
     let ext_index = filename.rfind('.').unwrap_or(filename.len());
     let raw_filename = &filename[path_index..ext_index];
     
-    let (_remain, parsed) = func(Span::new(&text)).unwrap();
+    let (_remain, parsed) = parse_all(Span::new(&text)).unwrap();
 
     let ast_dest = format!("out/{}.ast", raw_filename);
     fs::create_dir_all("out")

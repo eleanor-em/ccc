@@ -5,9 +5,7 @@ pub mod analyse;
 pub mod builtins;
 pub mod codegen;
 pub mod error;
-pub mod expr;
-pub mod func;
-pub mod statement;
+pub mod parse;
 pub mod util;
 
 pub type Span<'a> = LocatedSpan<&'a str>;

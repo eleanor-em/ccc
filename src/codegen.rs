@@ -2,7 +2,7 @@ use std::{collections::HashMap, intrinsics::transmute, path::Path, rc::Rc};
 
 use inkwell::{IntPredicate, OptimizationLevel, basic_block::BasicBlock, builder::Builder, context::Context, execution_engine::JitFunction, module::Module, values::FunctionValue};
 
-use crate::{ComplexInt, analyse::{ComplexPointer, ComplexValue, Type, Typed}, builtins::Builtins, error::CompileError, expr::{BinOp, Expr, UnOp}, func::Func, statement::Statement};
+use crate::{ComplexInt, analyse::{ComplexPointer, ComplexValue, Type, Typed}, builtins::Builtins, error::CompileError, parse::{BinOp, Expr, UnOp, Func, Statement}};
 
 struct SymbolTable<'ctx> {
     // TODO: function types
