@@ -29,19 +29,24 @@ pub enum BinOp {
     Times,
     Divide,
     Remainder,
+    Equals,
+    NotEquals,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum UnOp {
+    Negate,
+    Conjugate,
+    Modulus,
 }
 
 #[derive(Debug, Clone)]
 pub enum Expr {
     Value(ComplexInt),
     Id(String),
-    Modulus(Box<Expr>),
     BinOp(BinOp, Box<(Expr, Expr)>),
-    Negate(Box<Expr>),
-    Conjugate(Box<Expr>),
+    UnOp(UnOp, Box<Expr>),
     IfElse(Box<(Expr, Expr, Expr)>),
-    Equals(Box<(Expr, Expr)>),
-    NotEquals(Box<(Expr, Expr)>),
 }
 
 fn decimal(input: Span) -> IResult<Span> {
@@ -96,7 +101,7 @@ fn if_else(input: Span) -> IResult<Expr> {
 fn negate(input: Span) -> IResult<Expr> {
     map(
         preceded(tag("-"), factor), 
-        |e| Expr::Negate(Box::new(e))
+        |e| Expr::UnOp(UnOp::Negate, Box::new(e))
     )(input)
 }
 
@@ -107,14 +112,14 @@ fn conj(input: Span) -> IResult<Expr> {
         tag("^"),
         move || init.clone(),
         |acc, _| {
-            Expr::Conjugate(Box::new(acc))
+            Expr::UnOp(UnOp::Negate, Box::new(acc))
         })(input)
 }
 
 fn modulus(input: Span) -> IResult<Expr> {
     map(
         delimited(tag("|"), expression, tag("|")), 
-        |e| Expr::Modulus(Box::new(e))
+        |e| Expr::UnOp(UnOp::Modulus, Box::new(e))
     )(input)
 }
 
@@ -177,10 +182,11 @@ fn equality(input: Span) -> IResult<Expr> {
         pair(alt((tag("=="), tag("!="))), expr),
         move || init.clone(),
         |acc, (op, val): (Span, Expr)| {
-            match *op {
-                "==" => Expr::Equals(Box::new((acc, val))),
-                _    => Expr::NotEquals(Box::new((acc, val))),
-            }
+            let op = match *op {
+                "==" => BinOp::Equals,
+                _    => BinOp::NotEquals,
+            };
+            Expr::BinOp(op, Box::new((acc, val)))
         })(input)
 }
 

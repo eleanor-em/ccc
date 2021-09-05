@@ -11,6 +11,7 @@ pub enum CompileError {
     NoMain,
     NotYetImplemented(String),
     UnknownSymbol(String),
+    Unsupported(String),
 }
 
 impl fmt::Display for CompileError {
@@ -47,5 +48,9 @@ impl CompileError {
 
     pub fn unknown_symbol(symbol: String) -> CompileError {
         Self::UnknownSymbol(format!("unknown symbol `{}`", symbol))
+    }
+
+    pub fn unsupported(meta: String) -> CompileError {
+        Self::UnknownSymbol(format!("unsupported operation: {}", meta))
     }
 }

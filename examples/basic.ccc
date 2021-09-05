@@ -6,4 +6,9 @@ fn main() {
     println " test";
     print "partial test";
     println "";
+
+    println i == i + 1;
+    println -i == i;
+    println -i == i^;
+    println |1 + i|;
 }

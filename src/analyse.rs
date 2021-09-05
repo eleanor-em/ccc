@@ -1,8 +1,10 @@
-use inkwell::values::IntValue;
+use inkwell::values::{IntValue, PointerValue};
 
 // Value types
 #[derive(Debug, Clone, Copy)]
 pub enum Type {
+    MutIntScalar,
+    IntScalar,
     MutScalar,
     Scalar,
 }
@@ -17,9 +19,15 @@ impl<T> Typed<T> {
 }
 
 // Collects two LLVM IntValues into one object
+#[derive(Debug, Clone, Copy)]
 pub struct ComplexValue<'ctx> {
     pub re: IntValue<'ctx>,
     pub im: IntValue<'ctx>,
+}
+
+pub struct ComplexPointer<'ctx> {
+    pub re: PointerValue<'ctx>,
+    pub im: PointerValue<'ctx>,
 }
 
 impl<'ctx> From<(IntValue<'ctx>, IntValue<'ctx>)> for ComplexValue<'ctx> {

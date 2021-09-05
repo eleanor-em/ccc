@@ -153,10 +153,10 @@ pub fn statement(input: Span) -> IResult<Statement> {
     let (input, _) = opt(preceded(tag("--"), take_until("\n")))(input)?;
 
     alt((parse_keyword,
-        parse_print_lit,
-        parse_print,
         parse_print_lit_ln,
         parse_print_ln,
+        parse_print_lit,
+        parse_print,
         parse_let_mut,
         parse_let,
         parse_while,

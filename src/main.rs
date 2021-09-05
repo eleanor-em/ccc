@@ -14,7 +14,7 @@ fn main() {
     let text = fs::read_to_string(filename)
         .expect(&format!("Could not read file: {}", filename));
 
-    // Figure out the "raw name" (without path or)
+    // Figure out the "raw name" (without path or extension)
     let path_index = filename.find('/').map(|x| x + 1).unwrap_or(0);
     let ext_index = filename.rfind('.').unwrap_or(filename.len());
     let raw_filename = &filename[path_index..ext_index];

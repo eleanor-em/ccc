@@ -1,13 +1,8 @@
 use std::{collections::HashMap, intrinsics::transmute, path::Path, rc::Rc};
 
-use inkwell::{OptimizationLevel, basic_block::BasicBlock, builder::Builder, context::Context, execution_engine::JitFunction, module::Module, values::{FunctionValue, PointerValue}};
+use inkwell::{IntPredicate, OptimizationLevel, basic_block::BasicBlock, builder::Builder, context::Context, execution_engine::JitFunction, module::Module, values::FunctionValue};
 
-use crate::{ComplexInt, analyse::{ComplexValue, Type, Typed}, builtins::Builtins, error::CompileError, expr::{BinOp, Expr}, func::Func, statement::Statement};
-
-struct ComplexPointer<'ctx> {
-    re: PointerValue<'ctx>,
-    im: PointerValue<'ctx>,
-}
+use crate::{ComplexInt, analyse::{ComplexPointer, ComplexValue, Type, Typed}, builtins::Builtins, error::CompileError, expr::{BinOp, Expr, UnOp}, func::Func, statement::Statement};
 
 struct SymbolTable<'ctx> {
     // TODO: function types
@@ -28,20 +23,12 @@ impl<'ctx> SymbolTable<'ctx> {
         self.func_map.get(name)
     }
 
-    fn has_func(&self, name: &str) -> bool {
-        self.func_map.contains_key(name)
-    }
-
     fn add_var(&mut self, name: String, ptr: ComplexPointer<'ctx>, ty: Type) {
         self.var_map.insert(name, Typed::new(ptr, ty));
     }
 
     fn var(&self, name: &str) -> Option<&Typed<ComplexPointer<'ctx>>> {
         self.var_map.get(name)
-    }
-
-    fn has_var(&self, name: &str) -> bool {
-        self.var_map.contains_key(name)
     }
 }
 
@@ -97,7 +84,7 @@ impl<'ctx> Compiler<'ctx> {
         Ok(self.builder.position_at_end(self.get_entry_block()?))
     }
 
-    fn complex_mul(&mut self, lval: ComplexValue<'ctx>, rval: ComplexValue<'ctx>) -> ComplexValue<'ctx> {
+    fn complex_imul(&self, lval: ComplexValue<'ctx>, rval: ComplexValue<'ctx>) -> ComplexValue<'ctx> {
         let re1 = self.builder.build_int_mul(lval.re, rval.re, "tmp_imul_re1");
         let re2 = self.builder.build_int_mul(lval.im, rval.im, "tmp_imul_re2");
         let re = self.builder.build_int_sub(re1, re2, "tmp_imul_re");
@@ -107,6 +94,42 @@ impl<'ctx> Compiler<'ctx> {
         ComplexValue { re, im }
     }
 
+    fn complex_icmp(&mut self, op: IntPredicate, lval: ComplexValue<'ctx>, rval: ComplexValue<'ctx>)
+            -> Result<ComplexValue<'ctx>, CompileError> {
+        let cmp1 = self.builder.build_int_compare(op, lval.re, rval.re, "tmp_icmp");
+        let cmp2 = self.builder.build_int_compare(op, lval.im, rval.im, "tmp_icmp");
+        let res = match op {
+            IntPredicate::EQ => self.builder.build_and(cmp1, cmp2, "tmp_res"),
+            IntPredicate::NE => self.builder.build_or(cmp1, cmp2, "tmp_res"),
+            _ => Err(CompileError::unsupported(format!("{:?}", op)))?,
+        };
+        let res = self.builder.build_int_z_extend(res, self.ctx.i64_type(), "tmp_cast");
+        Ok(ComplexValue {
+            re: res,
+            im: self.ctx.i64_type().const_int(0, true),
+        })
+    }
+
+    #[inline]
+    fn complex_conjugate(&self, val: ComplexValue<'ctx>) -> ComplexValue<'ctx> {
+        (val.re, self.builder.build_int_neg(val.im, "tmp_ineg")).into()
+    }
+
+    fn complex_imodulus(&mut self, val: ComplexValue<'ctx>) -> Result<ComplexValue<'ctx>, CompileError> {
+        let conj = self.complex_conjugate(val);
+        let modsq = self.complex_imul(val, conj).re;
+        let isqrt = self.builtins.isqrt()?;
+        self.move_to_end()?;
+        let res = self.builder.build_call(isqrt, &[modsq.into()], "tmp_isqrt")
+            .try_as_basic_value().left()
+                .ok_or(CompileError::InvalidState("failed to interpret return value of isqrt"))?
+            .into_int_value();
+        Ok(ComplexValue {
+            re: res,
+            im: self.ctx.i64_type().const_int(0, true),
+        })
+    }
+
     fn build_expr(&mut self, expr: Expr) -> Result<ComplexValue<'ctx>, CompileError> {
         match expr {
             Expr::Value(ComplexInt(re, im)) => {
@@ -114,7 +137,6 @@ impl<'ctx> Compiler<'ctx> {
                 unsafe {
                     let re = transmute(re);
                     let im = transmute(im);
-                    // TODO: sign extension may not be necessary
                     let re = self.ctx.i64_type().const_int(re, true);
                     let im = self.ctx.i64_type().const_int(im, true);
                     Ok(ComplexValue { re, im })
@@ -140,16 +162,29 @@ impl<'ctx> Compiler<'ctx> {
                                     self.builder.build_int_add(lval.im, rval.im, "tmp_iadd_im")).into(),
                     BinOp::Minus => (self.builder.build_int_sub(lval.re, rval.re, "tmp_isub_re"),
                                      self.builder.build_int_sub(lval.im, rval.im, "tmp_isub_im")).into(),
-                    BinOp::Times => self.complex_mul(lval, rval),
-                    _ => Err(CompileError::not_yet_impl_dbg(op))?,
+                    BinOp::Times => self.complex_imul(lval, rval),
+                    BinOp::Equals => self.complex_icmp(IntPredicate::EQ, lval, rval)?,
+                    BinOp::NotEquals => self.complex_icmp(IntPredicate::NE, lval, rval)?,
+                    BinOp::Divide => Err(CompileError::not_yet_impl_dbg(op))?,
+                    BinOp::Remainder => Err(CompileError::not_yet_impl_dbg(op))?,
                 };
                 Ok(res)
             },
+            Expr::UnOp(op, expr) => {
+                let val = self.build_expr(*expr)?;
+                let res = match op {
+                    UnOp::Negate    => (self.builder.build_int_neg(val.re, "tmp_ineg"),
+                                        self.builder.build_int_neg(val.im, "tmp_ineg")).into(),
+                    UnOp::Conjugate => self.complex_conjugate(val),
+                    UnOp::Modulus   => self.complex_imodulus(val)?,
+                };
+                Ok(res)
+            }
             _ => Err(CompileError::not_yet_impl(format!("expression: {:?}", expr))),
         }
     }
 
-    fn build_let(&mut self, id: String, value: Expr) -> Result<(), CompileError> {
+    fn build_let_general(&mut self, id: String, value: Expr, ty: Type) -> Result<(), CompileError> {
         // allocate variable memory
         self.move_to_entry()?;
         let re = self.builder.build_alloca(self.ctx.i64_type(), &name_re(&id));
@@ -161,8 +196,17 @@ impl<'ctx> Compiler<'ctx> {
         self.builder.build_store(im, value.im);
 
         // update symbol table
-        self.sym.add_var(id, ComplexPointer { re, im }, Type::Scalar);
+        self.sym.add_var(id, ComplexPointer { re, im }, ty);
         Ok(())
+
+    }
+
+    fn build_let(&mut self, id: String, value: Expr) -> Result<(), CompileError> {
+        self.build_let_general(id, value, Type::IntScalar)
+    }
+
+    fn build_let_mut(&mut self, id: String, value: Expr) -> Result<(), CompileError> {
+        self.build_let_general(id, value, Type::MutIntScalar)
     }
 
     fn build_print(&mut self, value: Expr) -> Result<(), CompileError> {
@@ -204,6 +248,7 @@ impl<'ctx> Compiler<'ctx> {
     fn build_statement(&mut self, statement: Statement) -> Result<(), CompileError> {
         match statement {
             Statement::Let(name, expr) => self.build_let(name, expr),
+            Statement::LetMut(name, expr) => self.build_let_mut(name, expr),
             Statement::Print(expr) => self.build_print(expr),
             Statement::PrintLn(expr) => self.build_println(expr),
             Statement::PrintLit(val) => self.build_print_str(val),
@@ -237,7 +282,7 @@ impl<'ctx> Compiler<'ctx> {
 
     /// Executes the compiled code. Fails if there is no `main` function defined.
     fn exec(&self) -> Result<(), CompileError> {
-        if self.sym.has_func("main") {
+        if let Some(_) = self.sym.func("main") {
             let exec_engine = self.module.create_jit_execution_engine(OptimizationLevel::Aggressive)?;
             let exec: JitFunction<unsafe extern "C" fn()> = unsafe { exec_engine.get_function("main")? };
             unsafe { exec.call() };
@@ -253,5 +298,6 @@ pub fn run<P: AsRef<Path>>(dest: P, func: Func) -> Result<(), CompileError> {
     let mut gen = Compiler::new(&ctx);
     gen.build_func(func)?;
     gen.print_to_file(dest)?;
+    eprintln!("Executing program...\n---");
     gen.exec()
 }
