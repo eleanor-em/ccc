@@ -1,6 +1,6 @@
 use std::{env, fs};
 
-use ccomp::{Span, codegen, parse::parse_all};
+use ccomp::{Span, analyse::SpanLength, codegen, parse::parse_all};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -41,31 +41,35 @@ fn main() {
             let llvm_dest = format!("out/{}.ll", raw_filename);
             // Check if we had a compiler error, and attempt to explain it
             if let Err(e) = codegen::run(&llvm_dest, parsed) {
-                print!("{}error{}: {}", TERM_RED, TERM_WHITE, e);
+                print!("{}error{}: {}:", TERM_RED, TERM_WHITE, e);
                 // Show the position if available
                 if let Some(pos) = e.pos {
-                    print!(" at line {}, column {}:", pos.line, pos.col);
+                    print!("\n{}{}:{}:{}", TERM_RESET, filename, pos.line, pos.col);
                     // If possible, show the offending line of source
                     if pos.line < lines.len() {
                         let line = lines[pos.line - 1];
                         let trimmed = line.trim_start();
                         let begin_whitespace = line.len() - trimmed.len();
                         let space_count = pos.col - 1 - begin_whitespace;
-                        let underline_count = if let Some(len) = pos.len {
-                            // 0 is a sentinel value meaning "until the end of the line"
-                            if len == 0 {
-                                trimmed.len() - space_count
-                            } else {
-                                len
-                            }
-                        } else { 1 };
+                        let underline_count = match pos.len {
+                            SpanLength::Size(len) => len,
+                            SpanLength::ToEnd => {
+                                // FIXME: this is hack to deal with semicolon underlining
+                                trimmed.len() - space_count -
+                                    if line.chars().last().unwrap() == ';' {
+                                        1
+                                    } else {
+                                        0
+                                    }
+                                }
+                            SpanLength::None  => 1,
+                        };
                         let underline = if underline_count > 1 {
-                            "^".to_owned() + &"-".repeat(underline_count - 1)
+                            "└".to_owned() + &"─".repeat(underline_count - 2) + "┘"
                         } else {
                             "^".to_owned()
                         };
-                        print!("\n{} {:4} |\t\t{}\n       \t\t{}{}{}{}",
-                               TERM_RESET,
+                        print!("\n{:3} |\t{}\n     \t{}{}{}{}",
                                pos.line,
                                trimmed,
                                " ".repeat(space_count),
@@ -85,20 +89,25 @@ fn main() {
                         let trimmed = line.trim_start();
                         let begin_whitespace = line.len() - trimmed.len();
                         let space_count = pos.col - 1 - begin_whitespace;
-                        let underline_count = if let Some(len) = pos.len {
-                            // 0 is a sentinel value meaning "until the end of the line"
-                            if len == 0 {
-                                trimmed.len() - space_count
-                            } else {
-                                len
-                            }
-                        } else { 1 };
+                        let underline_count = match pos.len {
+                            SpanLength::Size(len) => len,
+                            SpanLength::ToEnd => {
+                                // FIXME: this is hack to deal with semicolon underlining
+                                trimmed.len() - space_count -
+                                    if line.chars().last().unwrap() == ';' {
+                                        1
+                                    } else {
+                                        0
+                                    }
+                                }
+                            SpanLength::None  => 1,
+                        };
                         let underline = if underline_count > 1 {
-                            "^".to_owned() + &"-".repeat(underline_count - 1)
+                            "└".to_owned() + &"─".repeat(underline_count - 2) + "┘"
                         } else {
                             "^".to_owned()
                         };
-                        print!("\n{} {:4} |\t\t{}\n       \t\t{}{}{}{}",
+                        print!("\n{}{:3} |\t{}\n    \t{}{}{}{}",
                                TERM_RESET,
                                pos.line,
                                trimmed,

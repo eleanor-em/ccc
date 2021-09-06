@@ -9,11 +9,18 @@ pub trait Complex<T> {
     fn im(&self) -> T;
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpanLength {
+    Size(usize),
+    ToEnd,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Location {
     pub line: usize,
     pub col: usize,
-    pub len: Option<usize>,
+    pub len: SpanLength,
 }
 
 impl Location {
@@ -24,14 +31,14 @@ impl Location {
                 Self {
                     line: self.line,
                     col: self.col,
-                    len: Some(0),
+                    len: SpanLength::ToEnd,
                 }
             },
             std::cmp::Ordering::Greater => {
                 Self {
                     line: rhs.line,
                     col: rhs.col,
-                    len: Some(0),
+                    len: SpanLength::ToEnd,
                 }
             }
             std::cmp::Ordering::Equal => {
@@ -40,7 +47,7 @@ impl Location {
                 Self {
                     line: self.line,
                     col: min.col,
-                    len: Some(max.col - min.col),
+                    len: SpanLength::Size(max.col - min.col),
                 }
             },
         }
@@ -50,8 +57,8 @@ impl Location {
 impl fmt::Display for Location {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.len {
-            Some(len) => write!(f, "line {}, column {}-{}", self.line, self.col, self.col + len),
-            None => write!(f, "line {}, column {}", self.line, self.col),
+            SpanLength::Size(len) => write!(f, "line {}, column {}-{}", self.line, self.col, self.col + len),
+            _ => write!(f, "line {}, column {}", self.line, self.col),
         }
     }
 }
@@ -61,7 +68,7 @@ impl From<&Span<'_>> for Location {
         Self {
             line: span.location_line() as usize,
             col: span.get_column(),
-            len: None,
+            len: SpanLength::None,
         }
     }
 }

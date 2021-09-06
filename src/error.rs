@@ -2,7 +2,7 @@ use std::{error::Error, fmt};
 
 use inkwell::{execution_engine::FunctionLookupError, support::LLVMString};
 
-use crate::{Span, analyse::{Located, Location}};
+use crate::{Span, analyse::{Located, Location, SpanLength}};
 
 /// From https://iximiuz.com/en/posts/rust-writing-parsers-with-nom/
 #[derive(Debug, PartialEq)]
@@ -187,7 +187,7 @@ impl LocatedCompileError {
     pub fn immutable(statement_pos: Location, id: String, decl: Location) -> LocatedCompileError {
         Self::with_secondary(statement_pos,
             CompileError::Immutable(format!("attempted to mutate `{}`", id)),
-            format!("`{}` declared here:", id),
+            format!("`{}` declared immutable here:", id),
             decl)
     }
 
@@ -196,6 +196,6 @@ impl LocatedCompileError {
     }
 
     pub fn no_main() -> LocatedCompileError {
-        Self::new(Location { line: 0, col: 0, len: None }, CompileError::NoMain)
+        Self::new(Location { line: 0, col: 0, len: SpanLength::None }, CompileError::NoMain)
     }
 }
