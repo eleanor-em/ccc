@@ -1,6 +1,6 @@
 use std::fmt;
 
-use inkwell::values::{IntValue, PointerValue};
+use inkwell::values::{FloatValue, PointerValue};
 
 use crate::Span;
 
@@ -107,8 +107,6 @@ impl<V, T: Complex<V>> Complex<V> for Located<Typed<T>> {
 // Value types
 #[derive(Debug, Clone, Copy)]
 pub enum Type {
-    MutIntScalar,
-    IntScalar,
     MutScalar,
     Scalar,
 }
@@ -121,24 +119,24 @@ impl<T> Typed<T> {
     pub fn val(&self) -> &T { &self.0 }
     pub fn ty(&self) -> Type { self.1 }
 
-    pub fn mutable(&self) -> bool {
-        matches!(self.1, Type::MutIntScalar | Type::MutScalar)
+    pub fn is_mutable(&self) -> bool {
+        matches!(self.1, Type::MutScalar)
     }
 }
 
 // Collects two LLVM IntValues into one object
 #[derive(Debug, Clone, Copy)]
 pub struct ComplexValue<'ctx> {
-    pub re: IntValue<'ctx>,
-    pub im: IntValue<'ctx>,
+    pub re: FloatValue<'ctx>,
+    pub im: FloatValue<'ctx>,
 }
 
-impl<'a> Complex<IntValue<'a>> for ComplexValue<'a> {
-    fn re(&self) -> IntValue<'a> {
+impl<'a> Complex<FloatValue<'a>> for ComplexValue<'a> {
+    fn re(&self) -> FloatValue<'a> {
         self.re
     }
 
-    fn im(&self) -> IntValue<'a> {
+    fn im(&self) -> FloatValue<'a> {
         self.im
     }
 }
@@ -148,8 +146,8 @@ pub struct ComplexPointer<'ctx> {
     pub im: PointerValue<'ctx>,
 }
 
-impl<'ctx> From<(IntValue<'ctx>, IntValue<'ctx>)> for ComplexValue<'ctx> {
-    fn from((re, im): (IntValue<'ctx>, IntValue<'ctx>)) -> Self {
+impl<'ctx> From<(FloatValue<'ctx>, FloatValue<'ctx>)> for ComplexValue<'ctx> {
+    fn from((re, im): (FloatValue<'ctx>, FloatValue<'ctx>)) -> Self {
         Self { re, im }
     }
 }

@@ -41,10 +41,12 @@ fn main() {
             let llvm_dest = format!("out/{}.ll", raw_filename);
             // Check if we had a compiler error, and attempt to explain it
             if let Err(e) = codegen::run(&llvm_dest, parsed) {
-                print!("{}error{}: {}:", TERM_RED, TERM_WHITE, e);
+                print!("{}error{}: {}:{}", TERM_RED, TERM_WHITE, e, TERM_RESET);
                 // Show the position if available
                 if let Some(pos) = e.pos {
-                    print!("\n{}{}:{}:{}", TERM_RESET, filename, pos.line, pos.col);
+                    // idk how to show the filename nicely
+                    // print!("\n{}:{}:{}", filename, pos.line, pos.col);
+
                     // If possible, show the offending line of source
                     if pos.line < lines.len() {
                         let line = lines[pos.line - 1];

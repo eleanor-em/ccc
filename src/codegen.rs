@@ -1,8 +1,8 @@
-use std::{collections::HashMap, intrinsics::transmute, path::Path, rc::Rc};
+use std::{collections::HashMap, path::Path, rc::Rc};
 
-use inkwell::{IntPredicate, OptimizationLevel, basic_block::BasicBlock, builder::Builder, context::Context, execution_engine::JitFunction, module::Module, values::FunctionValue};
+use inkwell::{FloatPredicate, OptimizationLevel, basic_block::BasicBlock, builder::Builder, context::Context, execution_engine::JitFunction, module::Module, values::{FunctionValue, InstructionOpcode}};
 
-use crate::{analyse::{Complex, ComplexPointer, ComplexValue, Located, Location, Type, Typed}, builtins::Builtins, error::{LocatedCompileError, InternalError}, parse::{BinOp, Expr, UnOp, Func, Statement}, util::ComplexInt};
+use crate::{analyse::{Complex, ComplexPointer, ComplexValue, Located, Location, Type, Typed}, builtins::Builtins, error::{LocatedCompileError, InternalError}, parse::{BinOp, Expr, UnOp, Func, Statement}, util::ComplexNum};
 
 struct SymbolTable<'ctx> {
     // TODO: function types
@@ -86,71 +86,68 @@ impl<'ctx> Compiler<'ctx> {
         Ok(())
     }
 
-    fn complex_imul(&self, lval: ComplexValue<'ctx>, rval: ComplexValue<'ctx>) -> ComplexValue<'ctx> {
-        let re1 = self.builder.build_int_mul(lval.re, rval.re, "tmp_imul_re1");
-        let re2 = self.builder.build_int_mul(lval.im, rval.im, "tmp_imul_re2");
-        let re = self.builder.build_int_sub(re1, re2, "tmp_imul_re");
-        let im1 = self.builder.build_int_mul(lval.re, rval.im, "tmp_imul_im1");
-        let im2 = self.builder.build_int_mul(lval.im, rval.re, "tmp_imul_im2");
-        let im = self.builder.build_int_add(im1, im2, "tmp_imul_im");
+    fn complex_mul(&self, lval: ComplexValue<'ctx>, rval: ComplexValue<'ctx>) -> ComplexValue<'ctx> {
+        let re1 = self.builder.build_float_mul(lval.re, rval.re, "tmp_mul_re1");
+        let re2 = self.builder.build_float_mul(lval.im, rval.im, "tmp_mul_re2");
+        let re = self.builder.build_float_sub(re1, re2, "tmp_mul_re");
+        let im1 = self.builder.build_float_mul(lval.re, rval.im, "tmp_mul_im1");
+        let im2 = self.builder.build_float_mul(lval.im, rval.re, "tmp_mul_im2");
+        let im = self.builder.build_float_add(im1, im2, "tmp_mul_im");
         ComplexValue { re, im }
     }
 
-    fn complex_icmp(&mut self, pos: Location, op: IntPredicate, lval: ComplexValue<'ctx>, rval: ComplexValue<'ctx>)
+    fn complex_cmp(&mut self, pos: Location, op: FloatPredicate, lval: ComplexValue<'ctx>, rval: ComplexValue<'ctx>)
             -> Result<ComplexValue<'ctx>, LocatedCompileError> {
-        let cmp1 = self.builder.build_int_compare(op, lval.re, rval.re, "tmp_icmp");
-        let cmp2 = self.builder.build_int_compare(op, lval.im, rval.im, "tmp_icmp");
+        let cmp1 = self.builder.build_float_compare(op, lval.re, rval.re, "tmp_cmp1");
+        let cmp2 = self.builder.build_float_compare(op, lval.im, rval.im, "tmp_cmp2");
         let res = match op {
-            IntPredicate::EQ => self.builder.build_and(cmp1, cmp2, "tmp_res"),
-            IntPredicate::NE => self.builder.build_or(cmp1, cmp2, "tmp_res"),
-            _ => return Err(LocatedCompileError::unsupported(pos, format!("{:?}", op)))
+            FloatPredicate::OEQ => self.builder.build_and(cmp1, cmp2, "tmp_res"),
+            FloatPredicate::ONE => self.builder.build_or(cmp1, cmp2, "tmp_res"),
+            _                   => return Err(LocatedCompileError::unsupported(pos, format!("{:?}", op)))
         };
         let res = self.builder.build_int_z_extend(res, self.ctx.i64_type(), "tmp_cast");
+        let res = self.builder.build_cast(InstructionOpcode::SIToFP, res, self.ctx.f64_type(), "tmp_castf")
+            .into_float_value();
         Ok(ComplexValue {
             re: res,
-            im: self.ctx.i64_type().const_int(0, true),
+            im: self.ctx.f64_type().const_zero(),
         })
     }
 
     #[inline]
     fn complex_conjugate(&self, val: ComplexValue<'ctx>) -> ComplexValue<'ctx> {
-        (val.re, self.builder.build_int_neg(val.im, "tmp_ineg")).into()
+        (val.re, self.builder.build_float_neg(val.im, "tmp_neg")).into()
     }
 
-    fn complex_imodulus(&mut self, val: ComplexValue<'ctx>) -> Result<ComplexValue<'ctx>, LocatedCompileError> {
+    fn complex_modulus(&mut self, val: ComplexValue<'ctx>) -> Result<ComplexValue<'ctx>, LocatedCompileError> {
         let conj = self.complex_conjugate(val);
-        let modsq = self.complex_imul(val, conj).re;
-        let isqrt = self.builtins.isqrt()?;
+        let modsq = self.complex_mul(val, conj).re;
+        let sqrt = self.builtins.sqrt();
         self.move_to_end()?;
-        let res = self.builder.build_call(isqrt, &[modsq.into()], "tmp_isqrt")
+        let res = self.builder.build_call(sqrt, &[modsq.into()], "tmp_sqrt")
             .try_as_basic_value().left()
-                .ok_or_else(|| InternalError::invalid_state("failed to interpret return value of isqrt"))?
-            .into_int_value();
+                .ok_or_else(|| InternalError::invalid_state("failed to interpret return value of sqrt"))?
+            .into_float_value();
         Ok(ComplexValue {
             re: res,
-            im: self.ctx.i64_type().const_int(0, true),
+            im: self.ctx.f64_type().const_zero(),
         })
     }
 
     fn build_expr(&mut self, expr: Located<Expr>) -> Result<ComplexValue<'ctx>, LocatedCompileError> {
         let (expr, pos) = expr.unwrap();
         match expr {
-            Expr::Value(ComplexInt(re, im)) => {
-                // Safety: always
-                unsafe {
-                    let re = transmute(re);
-                    let im = transmute(im);
-                    let re = self.ctx.i64_type().const_int(re, true);
-                    let im = self.ctx.i64_type().const_int(im, true);
-                    Ok(ComplexValue { re, im })
-                }
+            Expr::Value(ComplexNum(re, im)) => {
+                let re = self.ctx.f64_type().const_float(re);
+                let im = self.ctx.f64_type().const_float(im);
+                Ok(ComplexValue { re, im })
             },
             Expr::Id(id) => {
                 if let Some(var) = self.sym.var(id.borrow_val()) {
                     let re = self.builder.build_load(var.re(), &name_re(id.borrow_val()))
-                        .into_int_value();
+                        .into_float_value();
                     let im = self.builder.build_load(var.im(), &name_im(id.borrow_val()))
-                        .into_int_value();
+                        .into_float_value();
                     Ok(ComplexValue { re, im })
                 } else {
                     Err(LocatedCompileError::unknown_symbol(id))
@@ -162,28 +159,27 @@ impl<'ctx> Compiler<'ctx> {
                 let rval = self.build_expr(rhs)?;
                 
                 match op {
-                    BinOp::Plus => Ok((self.builder.build_int_add(lval.re, rval.re, "tmp_iadd_re"),
-                                    self.builder.build_int_add(lval.im, rval.im, "tmp_iadd_im")).into()),
-                    BinOp::Minus => Ok((self.builder.build_int_sub(lval.re, rval.re, "tmp_isub_re"),
-                                     self.builder.build_int_sub(lval.im, rval.im, "tmp_isub_im")).into()),
-                    BinOp::Times => Ok(self.complex_imul(lval, rval)),
-                    BinOp::Equals => self.complex_icmp(pos, IntPredicate::EQ, lval, rval),
-                    BinOp::NotEquals => self.complex_icmp(pos, IntPredicate::NE, lval, rval),
-                    BinOp::Divide => Err(LocatedCompileError::not_yet_impl(pos, "`/`")),
+                    BinOp::Plus      => Ok((self.builder.build_float_add(lval.re, rval.re, "tmp_add_re"),
+                                            self.builder.build_float_add(lval.im, rval.im, "tmp_add_im")).into()),
+                    BinOp::Minus     => Ok((self.builder.build_float_sub(lval.re, rval.re, "tmp_sub_re"),
+                                            self.builder.build_float_sub(lval.im, rval.im, "tmp_sub_im")).into()),
+                    BinOp::Times     => Ok(self.complex_mul(lval, rval)),
+                    BinOp::Equals    => self.complex_cmp(pos, FloatPredicate::OEQ, lval, rval),
+                    BinOp::NotEquals => self.complex_cmp(pos, FloatPredicate::ONE, lval, rval),
+                    BinOp::Divide    => Err(LocatedCompileError::not_yet_impl(pos, "`/`")),
                     BinOp::Remainder => Err(LocatedCompileError::not_yet_impl(pos, "`%`")),
-                    BinOp::Power => Err(LocatedCompileError::not_yet_impl(pos, "`**`")),
+                    BinOp::Power     => Err(LocatedCompileError::not_yet_impl(pos, "`**`")),
                 }
             },
             Expr::UnOp(op, expr) => {
                 let val = self.build_expr(*expr)?;
-                let res = match op {
-                    UnOp::Negate    => (self.builder.build_int_neg(val.re, "tmp_ineg"),
-                                        self.builder.build_int_neg(val.im, "tmp_ineg")).into(),
-                    UnOp::Conjugate => self.complex_conjugate(val),
-                    UnOp::Modulus   => self.complex_imodulus(val)?,
-                };
-                Ok(res)
-            }
+                match op {
+                    UnOp::Negate    => Ok((self.builder.build_float_neg(val.re, "tmp_neg_re"),
+                                           self.builder.build_float_neg(val.im, "tmp_neg_im")).into()),
+                    UnOp::Conjugate => Ok(self.complex_conjugate(val)),
+                    UnOp::Modulus   => self.complex_modulus(val),
+                }
+            },
             _ => Err(LocatedCompileError::not_yet_impl(pos, format!("expression: {:?}", expr))),
         }
     }
@@ -191,8 +187,8 @@ impl<'ctx> Compiler<'ctx> {
     fn build_let_general(&mut self, pos: Location, id: Located<String>, expr: Located<Expr>, ty: Type) -> Result<(), LocatedCompileError> {
         // allocate variable memory
         self.move_to_entry()?;
-        let re = self.builder.build_alloca(self.ctx.i64_type(), &name_re(id.borrow_val()));
-        let im = self.builder.build_alloca(self.ctx.i64_type(), &name_im(id.borrow_val()));
+        let re = self.builder.build_alloca(self.ctx.f64_type(), &name_re(id.borrow_val()));
+        let im = self.builder.build_alloca(self.ctx.f64_type(), &name_im(id.borrow_val()));
 
         // assign value
         let value = self.build_expr(expr)?;
@@ -206,17 +202,17 @@ impl<'ctx> Compiler<'ctx> {
     }
 
     fn build_let(&mut self, pos: Location, id: Located<String>, expr: Located<Expr>) -> Result<(), LocatedCompileError> {
-        self.build_let_general(pos, id, expr, Type::IntScalar)
+        self.build_let_general(pos, id, expr, Type::Scalar)
     }
 
     fn build_let_mut(&mut self, pos: Location, id: Located<String>, expr: Located<Expr>) -> Result<(), LocatedCompileError> {
-        self.build_let_general(pos, id, expr, Type::MutIntScalar)
+        self.build_let_general(pos, id, expr, Type::MutScalar)
     }
 
     fn build_print(&mut self, expr: Located<Expr>) -> Result<(), LocatedCompileError> {
         let value = self.build_expr(expr)?;
         self.move_to_end()?;
-        let f = self.builtins.print_int();
+        let f = self.builtins.print_float();
         self.move_to_end()?;
         self.builder.build_call(f, &[value.re.into(), value.im.into()], "call");
         Ok(())
@@ -225,7 +221,7 @@ impl<'ctx> Compiler<'ctx> {
     fn build_println(&mut self, expr: Located<Expr>) -> Result<(), LocatedCompileError> {
         let value = self.build_expr(expr)?;
         self.move_to_end()?;
-        let f = self.builtins.println_int();
+        let f = self.builtins.println_float();
         self.move_to_end()?;
         self.builder.build_call(f, &[value.re.into(), value.im.into()], "call");
         Ok(())
@@ -254,7 +250,7 @@ impl<'ctx> Compiler<'ctx> {
         let val = self.build_expr(expr)?;
 
         if let Some(var) = self.sym.var(id.borrow_val()) {
-            if var.borrow_val().mutable() {
+            if var.borrow_val().is_mutable() {
                 self.builder.build_store(var.re(), val.re);
                 self.builder.build_store(var.im(), val.im);
                 Ok(())
@@ -307,8 +303,11 @@ impl<'ctx> Compiler<'ctx> {
     fn exec(&self) -> Result<(), LocatedCompileError> {
         if self.sym.func("main").is_some() {
             let exec_engine = self.module.create_jit_execution_engine(OptimizationLevel::Aggressive)?;
-            let exec: JitFunction<unsafe extern "C" fn()> = unsafe { exec_engine.get_function("main")? };
-            unsafe { exec.call() };
+            // Safety: ¯\_(ツ)_/¯
+            unsafe {
+                let exec: JitFunction<unsafe extern "C" fn()> = exec_engine.get_function("main")?;
+                exec.call();
+            }
             Ok(())
         } else {
             Err(LocatedCompileError::no_main())

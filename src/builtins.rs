@@ -1,20 +1,17 @@
 use std::rc::Rc;
 
-use inkwell::{builder::Builder, context::Context, module::{Linkage, Module}, values::{FunctionValue, InstructionOpcode}};
-
-use crate::error::{InternalError, LocatedCompileError};
+use inkwell::{builder::Builder, context::Context, module::{Linkage, Module}, values::FunctionValue};
 
 pub struct Builtins<'ctx> {
     ctx: &'ctx Context,
     module: Rc<Module<'ctx>>,
     builder: Rc<Builder<'ctx>>,
     _printf: Option<FunctionValue<'ctx>>,
-    print_int: Option<FunctionValue<'ctx>>,
-    println_int: Option<FunctionValue<'ctx>>,
+    print_float: Option<FunctionValue<'ctx>>,
+    println_float: Option<FunctionValue<'ctx>>,
     print_str: Option<FunctionValue<'ctx>>,
     println_str: Option<FunctionValue<'ctx>>,
     sqrt: Option<FunctionValue<'ctx>>,
-    isqrt: Option<FunctionValue<'ctx>>,
 }
 
 impl<'ctx> Builtins<'ctx> {
@@ -27,40 +24,40 @@ impl<'ctx> Builtins<'ctx> {
         *self._printf.get_or_insert(f)
     }
 
-    pub fn print_int(&mut self) -> FunctionValue<'ctx> {
+    pub fn print_float(&mut self) -> FunctionValue<'ctx> {
         let printf = self.printf();
-        let f = self.print_int.unwrap_or_else(|| {
-            let t_i64 = self.ctx.i64_type();
-            let fn_type = self.ctx.void_type().fn_type(&[t_i64.into(), t_i64.into()], false);
+        let f = self.print_float.unwrap_or_else(|| {
+            let t_f64 = self.ctx.f64_type();
+            let fn_type = self.ctx.void_type().fn_type(&[t_f64.into(), t_f64.into()], false);
             let f = self.module.add_function(".print_int", fn_type, None);
             let block = self.ctx.append_basic_block(f, "entry");
             self.builder.position_at_end(block);
-            let printf_str = self.builder.build_global_string_ptr("%lli + %llii", ".int_format");
-            let re = f.get_nth_param(0).unwrap().into_int_value();
-            let im = f.get_nth_param(1).unwrap().into_int_value();
+            let printf_str = self.builder.build_global_string_ptr("%.2f + %.2fi", ".int_format");
+            let re = f.get_nth_param(0).unwrap().into_float_value();
+            let im = f.get_nth_param(1).unwrap().into_float_value();
             self.builder.build_call(printf, &[printf_str.as_pointer_value().into(), re.into(), im.into()], "call");
             self.builder.build_return(None);
             f
         });
-        *self.print_int.get_or_insert(f)
+        *self.print_float.get_or_insert(f)
     }
 
-    pub fn println_int(&mut self) -> FunctionValue<'ctx> {
+    pub fn println_float(&mut self) -> FunctionValue<'ctx> {
         let printf = self.printf();
-        let f = self.println_int.unwrap_or_else(|| {
-            let t_i64 = self.ctx.i64_type();
-            let fn_type = self.ctx.void_type().fn_type(&[t_i64.into(), t_i64.into()], false);
+        let f = self.println_float.unwrap_or_else(|| {
+            let t_f64 = self.ctx.f64_type();
+            let fn_type = self.ctx.void_type().fn_type(&[t_f64.into(), t_f64.into()], false);
             let f = self.module.add_function(".println_int", fn_type, None);
             let block = self.ctx.append_basic_block(f, "entry");
             self.builder.position_at_end(block);
-            let printf_str = self.builder.build_global_string_ptr("%lli + %llii\n", ".ln_int_format");
-            let re = f.get_nth_param(0).unwrap().into_int_value();
-            let im = f.get_nth_param(1).unwrap().into_int_value();
+            let printf_str = self.builder.build_global_string_ptr("%.2f + %.2fi\n", ".ln_int_format");
+            let re = f.get_nth_param(0).unwrap().into_float_value();
+            let im = f.get_nth_param(1).unwrap().into_float_value();
             self.builder.build_call(printf, &[printf_str.as_pointer_value().into(), re.into(), im.into()], "call");
             self.builder.build_return(None);
             f
         });
-        *self.println_int.get_or_insert(f)
+        *self.println_float.get_or_insert(f)
     }
 
     pub fn print_str(&mut self) -> FunctionValue<'ctx> {
@@ -106,38 +103,11 @@ impl<'ctx> Builtins<'ctx> {
         *self.sqrt.get_or_insert(f)
     }
 
-    pub fn isqrt(&mut self) -> Result<FunctionValue<'ctx>, LocatedCompileError> {
-        let sqrt = self.sqrt();
-        let f: Result<_, LocatedCompileError> = self.isqrt
-            .map(Ok)
-            .unwrap_or_else(|| {
-                let t_f64 = self.ctx.f64_type();
-                let t_i64 = self.ctx.i64_type();
-                let fn_type = t_i64.fn_type(&[t_i64.into()], false);
-
-                let f = self.module.add_function(".isqrt", fn_type, None);
-                let block = self.ctx.append_basic_block(f, "entry");
-                self.builder.position_at_end(block);
-                let x = f.get_nth_param(0).unwrap().into_int_value();
-                let xf = self.builder.build_cast(InstructionOpcode::SIToFP, x, t_f64, "tmp_cast")
-                    .into_float_value();
-                let res = self.builder.build_call(sqrt, &[xf.into()], "call")
-                    .try_as_basic_value().left()
-                    .ok_or_else(|| InternalError::invalid_state("failed to interpret return value of sqrt"))?
-                    .into_float_value();
-                let res = self.builder.build_cast(InstructionOpcode::FPToSI, res, t_i64, "tmp_cast")
-                    .into_int_value();
-                self.builder.build_return(Some(&res));
-                Ok(f)
-            });
-        Ok(*self.isqrt.get_or_insert(f?))
-    }
-
     pub fn new(ctx: &'ctx Context, module: Rc<Module<'ctx>>, builder: Rc<Builder<'ctx>>) -> Self {
         Self {
             ctx, module, builder,
-            _printf: None, print_int: None, println_int: None, print_str: None, println_str: None,
-            sqrt: None, isqrt: None,
+            _printf: None, print_float: None, println_float: None, print_str: None, println_str: None,
+            sqrt: None,
         }
     }
 }

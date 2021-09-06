@@ -103,7 +103,7 @@ pub fn string_literal(input: Span) -> crate::IResult<String> {
 
 
 #[derive(Debug, Clone, Copy)]
-pub struct ComplexInt(pub i64, pub i64);
+pub struct ComplexNum(pub f64, pub f64);
 
 pub fn ws<'a, F: 'a, O>(f: F) -> impl FnMut(Span<'a>) -> crate::IResult<O>
         where

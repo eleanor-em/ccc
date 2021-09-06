@@ -1,6 +1,6 @@
 use nom::{branch::alt, bytes::complete::{tag, take_until}, character::complete::{alpha1, alphanumeric1, char, multispace0, one_of}, combinator::{map, opt, recognize, verify}, multi::{fold_many0, many0, many1}, sequence::{delimited, pair, preceded, separated_pair, terminated}};
 
-use crate::{IResult, Span, analyse::{Located, Location}, error::ParseError, util::{ComplexInt, string_literal, ws, ws_tag}};
+use crate::{IResult, Span, analyse::{Located, Location}, error::ParseError, util::{ComplexNum, string_literal, ws, ws_tag}};
 
 /* ----------------------------------------------------------------
     EXPRESSIONS
@@ -47,7 +47,7 @@ pub enum UnOp {
 
 #[derive(Debug, Clone)]
 pub enum Expr {
-    Value(ComplexInt),
+    Value(ComplexNum),
     Id(Located<String>),
     BinOp(BinOp, Box<(Located<Expr>, Located<Expr>)>),
     UnOp(UnOp, Box<Located<Expr>>),
@@ -60,11 +60,17 @@ fn decimal(input: Span) -> IResult<Span> {
 
 fn real(input: Span) -> IResult<Located<Expr>> {
     let left = Location::from(&input);
-    let (input, val) = decimal(input)?;
+    let (input, integral) = decimal(input)?;
+    let (input, rest) = opt(preceded(tag("."), decimal))(input)?;
     let right = Location::from(&input);
 
-    let expr = val.parse::<i64>().map(|val| {
-        Located::new(Expr::Value(ComplexInt(val, 0)), left.span_to(right))
+    let val = match rest {
+        Some(rest) => integral.to_string() + &rest,
+        None       => integral.to_string(),
+    };
+
+    let expr = val.parse::<f64>().map(|val| {
+        Located::new(Expr::Value(ComplexNum(val, 0.)), left.span_to(right))
     }).map_err(|_| ParseError::error(input, "failed to parse decimal value".to_owned()))?;
 
     Ok((input, expr))
@@ -72,13 +78,13 @@ fn real(input: Span) -> IResult<Located<Expr>> {
 
 fn imag(input: Span) -> IResult<Located<Expr>> {
     let left = Location::from(&input);
-    let (input, res) = terminated(recognize(opt(decimal)), tag("i"))(input)?;
+    let (input, res) = terminated(recognize(opt(real)), tag("i"))(input)?;
     let right = Location::from(&input);
     
     let expr = if res.is_empty() {
-        Ok(Expr::Value(ComplexInt(0, 1)))
+        Ok(Expr::Value(ComplexNum(0., 1.)))
     } else {
-        res.parse::<i64>().map(|val| Expr::Value(ComplexInt(0, val)))
+        res.parse::<f64>().map(|val| Expr::Value(ComplexNum(0., val)))
     }.map_err(|_| ParseError::error(input, "failed to parse decimal value".to_owned()))?;
 
     Ok((input, Located::new(expr, left.span_to(right))))
@@ -163,7 +169,6 @@ fn factor(input: Span) -> IResult<Located<Expr>> {
 fn exp_factor(input: Span) -> IResult<Located<Expr>> {
     // Need to do a right fold, but nom doesn't easily support that, so implement it ourselves
     let (input, init) = factor(input)?;
-
     let (input, result) = many0(preceded(ws_tag("**"), negate))(input)?;
     
     let mut iter = result.into_iter().rev();
