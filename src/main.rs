@@ -53,15 +53,10 @@ fn main() {
                         let space_count = pos.col - 1 - begin_whitespace;
                         let underline_count = match pos.len {
                             SpanLength::Size(len) => len,
-                            SpanLength::ToEnd => {
-                                // FIXME: this is hack to deal with semicolon underlining
+                            SpanLength::ToEnd =>
+                                // FIXME: this is a hack to deal with semicolon underlining
                                 trimmed.len() - space_count -
-                                    if line.chars().last().unwrap() == ';' {
-                                        1
-                                    } else {
-                                        0
-                                    }
-                                }
+                                    if line.ends_with(';') { 1 } else { 0 },
                             SpanLength::None  => 1,
                         };
                         let underline = if underline_count > 1 {
@@ -91,15 +86,10 @@ fn main() {
                         let space_count = pos.col - 1 - begin_whitespace;
                         let underline_count = match pos.len {
                             SpanLength::Size(len) => len,
-                            SpanLength::ToEnd => {
-                                // FIXME: this is hack to deal with semicolon underlining
+                            SpanLength::ToEnd =>
+                                // FIXME: this is a hack to deal with semicolon underlining
                                 trimmed.len() - space_count -
-                                    if line.chars().last().unwrap() == ';' {
-                                        1
-                                    } else {
-                                        0
-                                    }
-                                }
+                                    if line.ends_with(';') { 1 } else { 0 },
                             SpanLength::None  => 1,
                         };
                         let underline = if underline_count > 1 {
