@@ -22,6 +22,12 @@ fn main() {
 
     // Store a copy of the source code to make error reporting easier down the line
     let lines = text.as_str().split('\n').collect::<Vec<_>>();
+
+    // Terminal colours
+    const TERM_RED: &str = "\u{001b}[31;1m";
+    const TERM_RESET: &str = "\u{001b}[0m";
+    const TERM_WHITE: &str = "\u{001b}[37;1m";
+    const TERM_BLUE: &str = "\u{001b}[36;1m";
     
     match parse_all(Span::new(&text)) {
         // In this case, we can simply export the LLVM and run the code in a JIT environment
@@ -35,27 +41,71 @@ fn main() {
             let llvm_dest = format!("out/{}.ll", raw_filename);
             // Check if we had a compiler error, and attempt to explain it
             if let Err(e) = codegen::run(&llvm_dest, parsed) {
-                print!("\u{001b}[31;1merror\u{001b}[37;1m: {}", e);
+                print!("{}error{}: {}", TERM_RED, TERM_WHITE, e);
+                // Show the position if available
                 if let Some(pos) = e.pos {
                     print!(" at line {}, column {}:", pos.line, pos.col);
+                    // If possible, show the offending line of source
                     if pos.line < lines.len() {
                         let line = lines[pos.line - 1];
                         let trimmed = line.trim_start();
                         let begin_whitespace = line.len() - trimmed.len();
-                        print!("\n\u{001b}[0m {:4} |\t\t{}\n       \t\t{}\u{001b}[31;1m^\u{001b}[0m", pos.line, trimmed, " ".repeat(pos.col - 1 - begin_whitespace));
+                        let space_count = pos.col - 1 - begin_whitespace;
+                        let underline_count = if let Some(len) = pos.len {
+                            // 0 is a sentinel value meaning "until the end of the line"
+                            if len == 0 {
+                                trimmed.len() - space_count
+                            } else {
+                                len
+                            }
+                        } else { 1 };
+                        let underline = if underline_count > 1 {
+                            "^".to_owned() + &"-".repeat(underline_count - 1)
+                        } else {
+                            "^".to_owned()
+                        };
+                        print!("\n{} {:4} |\t\t{}\n       \t\t{}{}{}{}",
+                               TERM_RESET,
+                               pos.line,
+                               trimmed,
+                               " ".repeat(space_count),
+                               TERM_RED,
+                               underline,
+                               TERM_RESET);
                     }
-                } else {
-                    print!(":\u{001b}[0m");
                 }
+                // Show the note if one exists
                 if let Some(msg) = e.secondary_msg {
-                    print!("\n\u{001b}[36;1mnote\u{001b}[37;1m: {}", msg);
+                    print!("\n{}note{}: {}", TERM_BLUE, TERM_WHITE, msg);
                 }
+                // If the note points to a location, show the location and line of code
                 if let Some(pos) = e.secondary_pos {
                     if pos.line < lines.len() {
                         let line = lines[pos.line - 1];
                         let trimmed = line.trim_start();
                         let begin_whitespace = line.len() - trimmed.len();
-                        print!("\u{001b}[0m\n {:4} |\t\t{}\n       \t\t{}\u{001b}[36;1m^\u{001b}[0m", pos.line, trimmed, " ".repeat(pos.col - 1 - begin_whitespace));
+                        let space_count = pos.col - 1 - begin_whitespace;
+                        let underline_count = if let Some(len) = pos.len {
+                            // 0 is a sentinel value meaning "until the end of the line"
+                            if len == 0 {
+                                trimmed.len() - space_count
+                            } else {
+                                len
+                            }
+                        } else { 1 };
+                        let underline = if underline_count > 1 {
+                            "^".to_owned() + &"-".repeat(underline_count - 1)
+                        } else {
+                            "^".to_owned()
+                        };
+                        print!("\n{} {:4} |\t\t{}\n       \t\t{}{}{}{}",
+                               TERM_RESET,
+                               pos.line,
+                               trimmed,
+                               " ".repeat(space_count),
+                               TERM_BLUE,
+                               underline,
+                               TERM_RESET);
                     }
                 }
                 print!("\u{001b}[0m\n\n");
@@ -66,19 +116,25 @@ fn main() {
             match e {
                 nom::Err::Incomplete(_) => panic!("Unexpected error while parsing (`Incomplete`)"),
                 nom::Err::Error(e) | nom::Err::Failure(e) => {
-                    println!("\u{001b}[31;1merror\u{001b}[37;1m: at line {}, column {}:\u{001b}[0m",
+                    println!("{}error{}: at line {}, column {}:{}",
+                        TERM_RED,
+                        TERM_WHITE,
                         e.line(),
-                        e.col());
+                        e.col(),
+                        TERM_RESET);
                     if e.line() < lines.len() {
-                        println!("\t{}\n\t{}\u{001b}[31;1m^\u{001b}[0m", lines[e.line() - 1], " ".repeat(e.col() - 1));
+                        println!("\t{}\n\t{}{}^",
+                                 lines[e.line() - 1],
+                                 " ".repeat(e.col() - 1),
+                                 TERM_RED);
                     }
-                    print!("\u{001b}[37;1m");
+                    print!("{}", TERM_WHITE);
                     if let Some(msg) = e.msg() {
                         println!("{}", msg);
                     } else {
                         println!("unknown error");
                     }
-                    print!("\u{001b}[0m");
+                    print!("{}", TERM_RESET);
                 }
             }
         }

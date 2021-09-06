@@ -2,7 +2,7 @@ use std::{collections::HashMap, intrinsics::transmute, path::Path, rc::Rc};
 
 use inkwell::{IntPredicate, OptimizationLevel, basic_block::BasicBlock, builder::Builder, context::Context, execution_engine::JitFunction, module::Module, values::FunctionValue};
 
-use crate::{ComplexInt, analyse::{Complex, ComplexPointer, ComplexValue, Located, Location, Type, Typed}, builtins::Builtins, error::{LocatedCompileError, InternalError}, parse::{BinOp, Expr, UnOp, Func, Statement}};
+use crate::{analyse::{Complex, ComplexPointer, ComplexValue, Located, Location, Type, Typed}, builtins::Builtins, error::{LocatedCompileError, InternalError}, parse::{BinOp, Expr, UnOp, Func, Statement}, util::ComplexInt};
 
 struct SymbolTable<'ctx> {
     // TODO: function types
@@ -169,9 +169,9 @@ impl<'ctx> Compiler<'ctx> {
                     BinOp::Times => Ok(self.complex_imul(lval, rval)),
                     BinOp::Equals => self.complex_icmp(pos, IntPredicate::EQ, lval, rval),
                     BinOp::NotEquals => self.complex_icmp(pos, IntPredicate::NE, lval, rval),
-                    BinOp::Divide => Err(LocatedCompileError::not_yet_impl_dbg(pos, op)),
-                    BinOp::Remainder => Err(LocatedCompileError::not_yet_impl_dbg(pos, op)),
-                    BinOp::Power => Err(LocatedCompileError::not_yet_impl_dbg(pos, op)),
+                    BinOp::Divide => Err(LocatedCompileError::not_yet_impl(pos, "`/`")),
+                    BinOp::Remainder => Err(LocatedCompileError::not_yet_impl(pos, "`%`")),
+                    BinOp::Power => Err(LocatedCompileError::not_yet_impl(pos, "`**`")),
                 }
             },
             Expr::UnOp(op, expr) => {
@@ -188,7 +188,7 @@ impl<'ctx> Compiler<'ctx> {
         }
     }
 
-    fn build_let_general(&mut self, id: Located<String>, expr: Located<Expr>, ty: Type) -> Result<(), LocatedCompileError> {
+    fn build_let_general(&mut self, pos: Location, id: Located<String>, expr: Located<Expr>, ty: Type) -> Result<(), LocatedCompileError> {
         // allocate variable memory
         self.move_to_entry()?;
         let re = self.builder.build_alloca(self.ctx.i64_type(), &name_re(id.borrow_val()));
@@ -200,17 +200,17 @@ impl<'ctx> Compiler<'ctx> {
         self.builder.build_store(im, value.im);
 
         // update symbol table
-        self.sym.add_var(id, ComplexPointer { re, im }, ty);
+        self.sym.add_var(Located::new(id.val(), pos), ComplexPointer { re, im }, ty);
         Ok(())
 
     }
 
-    fn build_let(&mut self, id: Located<String>, expr: Located<Expr>) -> Result<(), LocatedCompileError> {
-        self.build_let_general(id, expr, Type::IntScalar)
+    fn build_let(&mut self, pos: Location, id: Located<String>, expr: Located<Expr>) -> Result<(), LocatedCompileError> {
+        self.build_let_general(pos, id, expr, Type::IntScalar)
     }
 
-    fn build_let_mut(&mut self, id: Located<String>, expr: Located<Expr>) -> Result<(), LocatedCompileError> {
-        self.build_let_general(id, expr, Type::MutIntScalar)
+    fn build_let_mut(&mut self, pos: Location, id: Located<String>, expr: Located<Expr>) -> Result<(), LocatedCompileError> {
+        self.build_let_general(pos, id, expr, Type::MutIntScalar)
     }
 
     fn build_print(&mut self, expr: Located<Expr>) -> Result<(), LocatedCompileError> {
@@ -249,7 +249,8 @@ impl<'ctx> Compiler<'ctx> {
         Ok(())
     }
 
-    fn build_assign(&mut self, id: Located<String>, expr: Located<Expr>) -> Result<(), LocatedCompileError> {
+    fn build_assign(&mut self, statement_pos: Location, id: Located<String>, expr: Located<Expr>)
+            -> Result<(), LocatedCompileError> {
         let val = self.build_expr(expr)?;
 
         if let Some(var) = self.sym.var(id.borrow_val()) {
@@ -258,7 +259,7 @@ impl<'ctx> Compiler<'ctx> {
                 self.builder.build_store(var.im(), val.im);
                 Ok(())
             } else {
-                Err(LocatedCompileError::immutable(id, var.pos()))
+                Err(LocatedCompileError::immutable(statement_pos, id.val(), var.pos()))
             }
         } else {
             Err(LocatedCompileError::unknown_symbol(id))
@@ -268,13 +269,13 @@ impl<'ctx> Compiler<'ctx> {
     fn build_statement(&mut self, statement: Located<Statement>) -> Result<(), LocatedCompileError> {
         let (statement, pos) = statement.unwrap();
         match statement {
-            Statement::Let(name, expr) => self.build_let(name, expr),
-            Statement::LetMut(name, expr) => self.build_let_mut(name, expr),
+            Statement::Let(name, expr) => self.build_let(pos, name, expr),
+            Statement::LetMut(name, expr) => self.build_let_mut(pos, name, expr),
             Statement::Print(expr) => self.build_print(expr),
             Statement::PrintLn(expr) => self.build_println(expr),
             Statement::PrintLit(val) => self.build_print_str(val),
             Statement::PrintLitLn(val) => self.build_println_str(val),
-            Statement::Assign(id, expr) => self.build_assign(id, expr),
+            Statement::Assign(id, expr) => self.build_assign(pos, id, expr),
             _ => Err(LocatedCompileError::not_yet_impl(pos, format!("statement: {:?}", statement))),
         }
     }

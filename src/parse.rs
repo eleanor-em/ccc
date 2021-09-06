@@ -1,6 +1,6 @@
-use nom::{branch::alt, bytes::complete::{tag, take_until}, character::complete::{alpha1, alphanumeric1, char, multispace0, one_of}, combinator::{map, map_res, opt, recognize, verify}, multi::{fold_many0, many0, many1}, sequence::{delimited, pair, preceded, separated_pair, terminated}};
+use nom::{branch::alt, bytes::complete::{tag, take_until}, character::complete::{alpha1, alphanumeric1, char, multispace0, one_of}, combinator::{map, opt, recognize, verify}, multi::{fold_many0, many0, many1}, sequence::{delimited, pair, preceded, separated_pair, terminated}};
 
-use crate::{ComplexInt, IResult, Span, analyse::{Located, Location}, error::ParseError, util::string_literal, ws, ws_tag};
+use crate::{IResult, Span, analyse::{Located, Location}, error::ParseError, util::{ComplexInt, string_literal, ws, ws_tag}};
 
 /* ----------------------------------------------------------------
     EXPRESSIONS
@@ -59,28 +59,29 @@ fn decimal(input: Span) -> IResult<Span> {
 }
 
 fn real(input: Span) -> IResult<Located<Expr>> {
-    let pos = Location::from(&input);
-    map_res(
-        decimal,
-        move |s: Span| s.parse::<i64>().map(|val| {
-            Located::new(Expr::Value(ComplexInt(val, 0)), pos)
-        })
-    )(input)
+    let left = Location::from(&input);
+    let (input, val) = decimal(input)?;
+    let right = Location::from(&input);
+
+    let expr = val.parse::<i64>().map(|val| {
+        Located::new(Expr::Value(ComplexInt(val, 0)), left.span_to(right))
+    }).map_err(|_| ParseError::error(input, "failed to parse decimal value".to_owned()))?;
+
+    Ok((input, expr))
 }
 
 fn imag(input: Span) -> IResult<Located<Expr>> {
-    let pos = Location::from(&input);
-    let (input, res) = map_res(
-        terminated(recognize(opt(decimal)), tag("i")),
-        |s: Span| {
-            if s.is_empty() {
-                Ok(Expr::Value(ComplexInt(0, 1)))
-            } else {
-                s.parse::<i64>().map(|val| Expr::Value(ComplexInt(0, val)))
-            }
-        }
-    )(input)?;
-    Ok((input, Located::new(res, pos)))
+    let left = Location::from(&input);
+    let (input, res) = terminated(recognize(opt(decimal)), tag("i"))(input)?;
+    let right = Location::from(&input);
+    
+    let expr = if res.is_empty() {
+        Ok(Expr::Value(ComplexInt(0, 1)))
+    } else {
+        res.parse::<i64>().map(|val| Expr::Value(ComplexInt(0, val)))
+    }.map_err(|_| ParseError::error(input, "failed to parse decimal value".to_owned()))?;
+
+    Ok((input, Located::new(expr, left.span_to(right))))
 }
 
 fn value(input: Span) -> IResult<Located<Expr>> {
@@ -95,33 +96,39 @@ pub fn identifier(input: Span) -> IResult<Span> {
 }
 
 fn identifier_expr(input: Span) -> IResult<Located<Expr>> {
-    let pos = Location::from(&input);
-    map(identifier, move |id: Span| Located::new(Expr::Id(Located::new(id.to_string(), pos)), pos))(input)
+    let left = Location::from(&input);
+    let (input, id) = identifier(input)?;
+    let right = Location::from(&input);
+    let pos = left.span_to(right);
+    let expr = Located::new(Expr::Id(Located::new(id.to_string(), pos)), pos);
+    Ok((input, expr))
 }
 
 fn if_else(input: Span) -> IResult<Located<Expr>> {
-    let pos = Location::from(&input);
-    map(
-        preceded(tag("if"),
-                       separated_pair(separated_pair(expression, tag("then"), expression),
-                       tag("else"),
-                       expression)),
-        move |((cond, e_if), e_else)| {
-            Located::new(Expr::IfElse(Box::new((cond, e_if, e_else))), pos)
-        } 
-    )(input)
+    let left = Location::from(&input);
+    let (input, ((cond, e_if), e_else)) = preceded(tag("if"),
+    separated_pair(separated_pair(expression, tag("then"), expression),
+        tag("else"),
+        expression))(input)?;
+    let right = Location::from(&input);
+    let pos = left.span_to(right);
+
+    let expr = Located::new(Expr::IfElse(Box::new((cond, e_if, e_else))), pos);
+    Ok((input, expr))
 }
 
 fn conj(input: Span) -> IResult<Located<Expr>> {
     let (input, init) = basic_factor(input)?;
-    let pos = init.pos();
+    let left = init.pos();
 
-    fold_many0(
-        tag("^"),
-        move || init.clone(),
-        move |acc, _| {
-            Located::new(Expr::UnOp(UnOp::Conjugate, Box::new(acc)), pos)
-        })(input)
+    let (input, elems) = many0(tag("^"))(input)?;
+
+    let mut expr = init;
+    for elem in elems {
+        let right = Location::from(&elem);
+        expr = Located::new(Expr::UnOp(UnOp::Conjugate, Box::new(expr)), left.span_to(right));
+    }
+    Ok((input, expr))
 }
 
 fn modulus(input: Span) -> IResult<Located<Expr>> {
@@ -156,16 +163,19 @@ fn factor(input: Span) -> IResult<Located<Expr>> {
 fn exp_factor(input: Span) -> IResult<Located<Expr>> {
     // Need to do a right fold, but nom doesn't easily support that, so implement it ourselves
     let (input, init) = factor(input)?;
-    let pos = init.pos();
 
     let (input, result) = many0(preceded(ws_tag("**"), negate))(input)?;
     
     let mut iter = result.into_iter().rev();
     if let Some(mut expr) = iter.next() {
         for next in iter {
-            expr = Located::new(Expr::BinOp(BinOp::Power, Box::new((next, expr))), pos);
+            let left = next.pos();
+            let right = expr.pos();
+            expr = Located::new(Expr::BinOp(BinOp::Power, Box::new((next, expr))), left.span_to(right));
         }
-        Ok((input, Located::new(Expr::BinOp(BinOp::Power, Box::new((init, expr))), pos)))
+        let left = init.pos();
+        let right = expr.pos();
+        Ok((input, Located::new(Expr::BinOp(BinOp::Power, Box::new((init, expr))), left.span_to(right))))
     } else {
         Ok((input, init))
     }
@@ -239,21 +249,21 @@ pub fn expression(input: Span) -> IResult<Located<Expr>> {
 fn expect_semicolon(input: Span) -> IResult<()> {
     match ws_tag(";")(input) {
         Ok((input, _)) => Ok((input, ())),
-        Err(_) => Err(nom::Err::Failure(ParseError::new(input, "expecting `;`".to_string()))),
+        Err(_) => Err(ParseError::fail(input, "expecting `;`".to_owned())),
     }
 }
 
 fn expect_open_brace(input: Span) -> IResult<()> {
     match ws_tag("{")(input) {
         Ok((input, _)) => Ok((input, ())),
-        Err(_) => Err(nom::Err::Failure(ParseError::new(input, "expecting `{`".to_string()))),
+        Err(_) => Err(ParseError::fail(input, "expecting `{`".to_owned())),
     }
 }
 
 fn expect_close_brace(input: Span) -> IResult<()> {
     match ws_tag("}")(input) {
         Ok((input, _)) => Ok((input, ())),
-        Err(_) => Err(nom::Err::Failure(ParseError::new(input, "expecting `}`".to_string()))),
+        Err(_) => Err(ParseError::fail(input, "expecting `}`".to_owned())),
     }
 }
 
@@ -307,21 +317,23 @@ fn parse_print_lit_ln(input: Span) -> IResult<Statement> {
 }
 
 fn parse_let(input: Span) -> IResult<Statement> {
-    map(
-        delimited(ws_tag("let"), 
-            separated_pair(identifier, ws_tag("="), expression),
-            expect_semicolon),
-        |(id, expr)| Statement::Let(Located::new(id.to_string(), Location::from(&id)), expr),
-    )(input)
+    let (input, _) = ws_tag("let")(input)?;
+    let left = Location::from(&input);
+    let (input, (id, expr)) = terminated(
+        separated_pair(identifier, ws_tag("="), expression),
+        ws_tag(";"))(input)?;
+    let statement = Statement::Let(Located::new(id.to_string(), left.span_to(Location::from(&id))), expr);
+    Ok((input, statement))
 }
 
 fn parse_let_mut(input: Span) -> IResult<Statement> {
-    map(
-        delimited(preceded(ws_tag("let"), ws_tag("mut")),
-            separated_pair(identifier, ws_tag("="), expression),
-            ws_tag(";")),
-        |(id, expr)| Statement::LetMut(Located::new(id.to_string(), Location::from(&id)), expr)
-    )(input)
+    let (input, _) = preceded(ws_tag("let"), ws_tag("mut"))(input)?;
+    let left = Location::from(&input);
+    let (input, (id, expr)) = terminated(
+        separated_pair(identifier, ws_tag("="), expression),
+        ws_tag(";"))(input)?;
+    let statement = Statement::LetMut(Located::new(id.to_string(), left.span_to(Location::from(&id))), expr);
+    Ok((input, statement))
 }
 
 fn parse_assign(input: Span) -> IResult<Statement> {
@@ -406,7 +418,7 @@ fn parse_keyword(input: Span) -> IResult<Statement> {
 fn statement(input: Span) -> IResult<Located<Statement>> {
     // Throw away comments
     let (input, _) = opt(preceded(tag("--"), take_until("\n")))(input)?;
-    let pos = Location::from(&input);
+    let left = Location::from(&input);
 
     let (input, statement) = alt((parse_keyword,
         parse_print_lit_ln,
@@ -424,7 +436,9 @@ fn statement(input: Span) -> IResult<Located<Statement>> {
         parse_mul_assign,
         parse_div_assign,
         parse_mod_assign))(input)?;
-    Ok((input, Located::new(statement, pos)))
+    let right = Location::from(&input);
+
+    Ok((input, Located::new(statement, left.span_to(right))))
 }
 
 /* ----------------------------------------------------------------
@@ -443,7 +457,7 @@ pub fn parse_all(input: Span) -> IResult<Func> {
     let (input, func) = map(
         preceded(preceded(ws_tag("()"), expect_open_brace),
             many0(statement)),
-        move |body| Func { name: name.to_string(), body }
+        move |body| Func { name: name.to_owned(), body }
     )(input)?;
     let (input, _) = expect_close_brace(input)?;
     Ok((input, func))

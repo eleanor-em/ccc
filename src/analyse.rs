@@ -13,11 +13,46 @@ pub trait Complex<T> {
 pub struct Location {
     pub line: usize,
     pub col: usize,
+    pub len: Option<usize>,
+}
+
+impl Location {
+    // default Eq/Ord impl's would do weird stuff, so write our own solution
+    pub fn span_to(self, rhs: Self) -> Self {
+        match self.line.cmp(&rhs.line) {
+            std::cmp::Ordering::Less    => {
+                Self {
+                    line: self.line,
+                    col: self.col,
+                    len: Some(0),
+                }
+            },
+            std::cmp::Ordering::Greater => {
+                Self {
+                    line: rhs.line,
+                    col: rhs.col,
+                    len: Some(0),
+                }
+            }
+            std::cmp::Ordering::Equal => {
+                let min = if self.col <= rhs.col { self } else { rhs };
+                let max = if self.col == min.col { rhs } else { self };
+                Self {
+                    line: self.line,
+                    col: min.col,
+                    len: Some(max.col - min.col),
+                }
+            },
+        }
+    }
 }
 
 impl fmt::Display for Location {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "line {}, column {}", self.line, self.col)
+        match self.len {
+            Some(len) => write!(f, "line {}, column {}-{}", self.line, self.col, self.col + len),
+            None => write!(f, "line {}, column {}", self.line, self.col),
+        }
     }
 }
 
@@ -26,6 +61,7 @@ impl From<&Span<'_>> for Location {
         Self {
             line: span.location_line() as usize,
             col: span.get_column(),
+            len: None,
         }
     }
 }
@@ -47,7 +83,7 @@ impl<T> Located<T> {
 
 impl<T: Clone> Clone for Located<T> {
     fn clone(&self) -> Self {
-        Self(self.0.clone(), self.1.clone())
+        Self(self.0.clone(), self.1)
     }
 }
 

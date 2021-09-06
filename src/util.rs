@@ -1,6 +1,6 @@
 /// Taken from https://raw.githubusercontent.com/Geal/nom/master/examples/string.rs
 
-use nom::branch::alt;
+use nom::{branch::alt, bytes::complete::tag, character::complete::multispace0};
 use nom::bytes::streaming::{is_not, take_while_m_n};
 use nom::character::streaming::{char, multispace1};
 use nom::combinator::{map, map_opt, value, verify};
@@ -148,6 +148,21 @@ fn parse_string(input: &str) -> IResult<&str, String>
 pub fn string_literal(input: Span) -> crate::IResult<String> {
   match parse_string(&input) {
     Ok((input, lit)) => Ok((Span::new(input), lit)),
-    Err(_) => Err(nom::Err::Error(ParseError::new(input, "invalid string literal".to_string())))
+    Err(_) => Err(nom::Err::Error(ParseError::new(input, "invalid string literal".to_owned())))
   }
+}
+
+
+#[derive(Debug, Clone, Copy)]
+pub struct ComplexInt(pub i64, pub i64);
+
+pub fn ws<'a, F: 'a, O>(f: F) -> impl FnMut(Span<'a>) -> crate::IResult<O>
+        where
+            F: Fn(Span) -> crate::IResult<O> {
+    delimited(multispace0, f, multispace0)
+}
+
+
+pub fn ws_tag<'a>(s: &'static str) -> impl FnMut(Span<'a>) -> crate::IResult<Span<'a>> {
+    delimited(multispace0, tag(s), multispace0)
 }

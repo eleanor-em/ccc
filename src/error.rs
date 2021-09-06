@@ -12,6 +12,14 @@ pub struct ParseError<'a> {
 }
 
 impl<'a> ParseError<'a> {
+    pub fn error(span: Span<'a>, message: String) -> nom::Err<Self> {
+        nom::Err::Error(Self::new(span, message))
+    }
+
+    pub fn fail(span: Span<'a>, message: String) -> nom::Err<Self> {
+        nom::Err::Failure(Self::new(span, message))
+    }
+
     pub fn new(span: Span<'a>, message: String) -> Self {
         Self { span, message: Some(message) }
     }
@@ -176,10 +184,10 @@ impl LocatedCompileError {
         Self::new(pos, CompileError::Unsupported(format!("unsupported operation: {}", meta)))
     }
 
-    pub fn immutable(id: Located<String>, decl: Location) -> LocatedCompileError {
-        Self::with_secondary(id.pos(),
-            CompileError::Immutable(format!("attempted to mutate `{}`", id.borrow_val())),
-            format!("`{}` declared here:", id.val()),
+    pub fn immutable(statement_pos: Location, id: String, decl: Location) -> LocatedCompileError {
+        Self::with_secondary(statement_pos,
+            CompileError::Immutable(format!("attempted to mutate `{}`", id)),
+            format!("`{}` declared here:", id),
             decl)
     }
 
@@ -188,6 +196,6 @@ impl LocatedCompileError {
     }
 
     pub fn no_main() -> LocatedCompileError {
-        Self::new(Location { line: 0, col: 0 }, CompileError::NoMain)
+        Self::new(Location { line: 0, col: 0, len: None }, CompileError::NoMain)
     }
 }
