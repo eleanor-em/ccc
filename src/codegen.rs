@@ -41,7 +41,19 @@ fn name_im(name: &str) -> String {
     format!("{}_im", name)
 }
 
+pub struct Config {
+    accurate_div: bool,
+    newton_rhapson_passes: usize,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self { accurate_div: false, newton_rhapson_passes: 10 }
+    }
+}
+
 pub struct Compiler<'ctx> {
+    config: Config,
     ctx: &'ctx Context,
     module: Rc<Module<'ctx>>,
     builder: Rc<Builder<'ctx>>,
@@ -52,13 +64,13 @@ pub struct Compiler<'ctx> {
 }
 
 impl<'ctx> Compiler<'ctx> {
-    pub fn new(ctx: &'ctx Context) -> Self {
+    pub fn new(config: Config, ctx: &'ctx Context) -> Self {
         let module = Rc::new(ctx.create_module("primary"));
         let builder = Rc::new(ctx.create_builder());
         let builtins = Builtins::new(ctx, module.clone(), builder.clone());
 
         Self {
-            ctx, module, builder, builtins,
+            config, ctx, module, builder, builtins,
             sym: SymbolTable::new(),
             inside_loop: false,
             current_fp: None,
@@ -116,6 +128,98 @@ impl<'ctx> Compiler<'ctx> {
         let re = self.builder.build_float_div(re, denom, "tmp_div_re_final");
         let im = self.builder.build_float_div(im, denom, "tmp_div_im_final");
         ComplexValue { re, im }
+    }
+
+    // This _may_ turn out to be more accurate for certain inputs.
+    fn complex_div_accurate(&mut self, lval: ComplexValue<'ctx>, rval: ComplexValue<'ctx>) -> Result<ComplexValue<'ctx>, LocatedCompileError> {
+        let fabs = self.builtins.abs();
+        let fmin = self.builtins.min();
+        let fmax = self.builtins.max();
+        self.move_to_end()?;
+
+        let a = lval.re();
+        let b = lval.im();
+        let c = rval.re();
+        let d = rval.im();
+
+        let one = self.ctx.f64_type().const_float(1.);
+
+        let c_abs = self.builder.build_call(fabs, &[c.into()], "tmp_cabs")
+            .try_as_basic_value().left()
+                .ok_or_else(|| InternalError::invalid_state("failed to interpret return value of abs"))?
+            .into_float_value();
+
+        let d_abs = self.builder.build_call(fabs, &[d.into()], "tmp_dabs")
+            .try_as_basic_value().left()
+                .ok_or_else(|| InternalError::invalid_state("failed to interpret return value of abs"))?
+            .into_float_value();
+
+        let min = self.builder.build_call(fmin, &[c_abs.into(), d_abs.into()], "tmp_min")
+            .try_as_basic_value().left()
+                .ok_or_else(|| InternalError::invalid_state("failed to interpret return value of min"))?
+            .into_float_value();
+
+        let max = self.builder.build_call(fmax, &[c_abs.into(), d_abs.into()], "tmp_max")
+            .try_as_basic_value().left()
+                .ok_or_else(|| InternalError::invalid_state("failed to interpret return value of max"))?
+            .into_float_value();
+        
+        /*
+          Where |c| < |d|:
+          1/hypot(c, d) = 1/(|d| hypot(1, |c/d|)) = 1/|d| * fastInvSqrt(1+|c/d|^2)
+         */
+        let x = self.builder.build_float_div(min, max, "tmp_opp");
+        let x = self.builder.build_float_mul(x, x, "tmp_sqr");
+        let x = self.builder.build_float_add(one, x, "tmp_x");
+
+        // https://stackoverflow.com/questions/11644441/fast-inverse-square-root-on-x64/11644533
+        let x2 = self.builder.build_float_mul(x, self.ctx.f64_type().const_float(0.5), "tmp_x2");
+        let i = self.builder.build_bitcast(x, self.ctx.i64_type(), "tmp_ftoi")
+            .into_int_value();
+        let i = self.builder.build_int_signed_div(i, self.ctx.i64_type().const_int(2, true), "tmp_shr");
+        let i = self.builder.build_int_sub(self.ctx.i64_type().const_int(0x5fe6eb50c7b537a9, true), i, "tmp_wtf");
+        let x = self.builder.build_bitcast(i, self.ctx.f64_type(), "tmp_itof")
+            .into_float_value();
+        // Newton-Rhapson iteration
+        let mut y = x.clone();
+        let mut x = self.builder.build_float_mul(y, y, "tmp_nr1");
+        x = self.builder.build_float_mul(x2, x, "tmp_nr2");
+        x = self.builder.build_float_sub(self.ctx.f64_type().const_float(1.5), x, "tmp_nr3");
+        x = self.builder.build_float_mul(y, x, "tmp_nr4");
+
+        for _ in 1..self.config.newton_rhapson_passes {
+            y = x.clone();
+            x = self.builder.build_float_mul(y, y, "tmp_nr1");
+            x = self.builder.build_float_mul(x2, x, "tmp_nr2");
+            x = self.builder.build_float_sub(self.ctx.f64_type().const_float(1.5), x, "tmp_nr3");
+            x = self.builder.build_float_mul(y, x, "tmp_nr4");
+        }
+
+        let denom = self.builder.build_float_div(x, max, "tmp_hypot");
+
+        /*
+            denom = 1. / hypot(c, d)
+            a *= denom
+            b *= denom
+            c *= denom
+            d *= denom
+            a * c + b * d  + i ( b * c - a * d )
+         */
+
+        let a = self.builder.build_float_mul(a, denom, "tmp_ad");
+        let b = self.builder.build_float_mul(b, denom, "tmp_bd");
+        let c = self.builder.build_float_mul(c, denom, "tmp_cd");
+        let d = self.builder.build_float_mul(d, denom, "tmp_dd");
+        
+        let x = self.builder.build_float_mul(a, c, "tmp_f1_re");
+        let y = self.builder.build_float_mul(b, d, "tmp_f2_re");
+        let re = self.builder.build_float_add(x, y, "tmp_f3_re");
+        
+        let xi = self.builder.build_float_mul(b, c, "tmp_f1_im");
+        let yi = self.builder.build_float_mul(a, d, "tmp_f2_im");
+        let im = self.builder.build_float_sub(xi, yi, "tmp_f3_im");
+
+        Ok(ComplexValue { re, im })
     }
 
     fn complex_cmp(&mut self, pos: Location, op: FloatPredicate, lval: ComplexValue<'ctx>, rval: ComplexValue<'ctx>)
@@ -188,7 +292,13 @@ impl<'ctx> Compiler<'ctx> {
                     BinOp::Times     => Ok(self.complex_mul(lval, rval)),
                     BinOp::Equals    => self.complex_cmp(pos, FloatPredicate::OEQ, lval, rval),
                     BinOp::NotEquals => self.complex_cmp(pos, FloatPredicate::ONE, lval, rval),
-                    BinOp::Divide    => Ok(self.complex_div(lval, rval)),
+                    BinOp::Divide    => {
+                        if self.config.accurate_div {
+                            self.complex_div_accurate(lval, rval)
+                        } else {
+                            Ok(self.complex_div(lval, rval))
+                        }
+                    },
                     BinOp::Remainder => Err(LocatedCompileError::not_yet_impl(pos, "`%`")),
                     BinOp::Power     => Err(LocatedCompileError::not_yet_impl(pos, "`**`")),
                 }
@@ -381,7 +491,7 @@ impl<'ctx> Compiler<'ctx> {
 
 pub fn run<P: AsRef<Path>>(dest: P, func: Func) -> Result<(), LocatedCompileError> {
     let ctx = Context::create();
-    let mut gen = Compiler::new(&ctx);
+    let mut gen = Compiler::new(Config::default(), &ctx);
     gen.build_func(func)?;
     gen.print_to_file(dest)?;
     eprintln!("Executing program...\n---");

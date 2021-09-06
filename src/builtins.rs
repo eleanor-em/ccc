@@ -12,6 +12,9 @@ pub struct Builtins<'ctx> {
     print_str: Option<FunctionValue<'ctx>>,
     println_str: Option<FunctionValue<'ctx>>,
     sqrt: Option<FunctionValue<'ctx>>,
+    min: Option<FunctionValue<'ctx>>,
+    max: Option<FunctionValue<'ctx>>,
+    abs: Option<FunctionValue<'ctx>>,
 }
 
 impl<'ctx> Builtins<'ctx> {
@@ -32,7 +35,7 @@ impl<'ctx> Builtins<'ctx> {
             let f = self.module.add_function(".print_float", fn_type, None);
             let block = self.ctx.append_basic_block(f, "entry");
             self.builder.position_at_end(block);
-            let printf_str = self.builder.build_global_string_ptr("%.2f + %.2fi", ".int_format");
+            let printf_str = self.builder.build_global_string_ptr("%.12f + %.12fi", ".int_format");
             let re = f.get_nth_param(0).unwrap().into_float_value();
             let im = f.get_nth_param(1).unwrap().into_float_value();
             self.builder.build_call(printf, &[printf_str.as_pointer_value().into(), re.into(), im.into()], "call");
@@ -50,7 +53,7 @@ impl<'ctx> Builtins<'ctx> {
             let f = self.module.add_function(".println_float", fn_type, None);
             let block = self.ctx.append_basic_block(f, "entry");
             self.builder.position_at_end(block);
-            let printf_str = self.builder.build_global_string_ptr("%.2f + %.2fi\n", ".ln_float_format");
+            let printf_str = self.builder.build_global_string_ptr("%.20f + %.20fi\n", ".ln_float_format");
             let re = f.get_nth_param(0).unwrap().into_float_value();
             let im = f.get_nth_param(1).unwrap().into_float_value();
             self.builder.build_call(printf, &[printf_str.as_pointer_value().into(), re.into(), im.into()], "call");
@@ -103,11 +106,38 @@ impl<'ctx> Builtins<'ctx> {
         *self.sqrt.get_or_insert(f)
     }
 
+    pub fn min(&mut self) -> FunctionValue<'ctx> {
+        let f = self.min.unwrap_or_else(|| {
+            let t_f64 = self.ctx.f64_type();
+            let fn_type = t_f64.fn_type(&[t_f64.into(), t_f64.into()], false);
+            self.module.add_function("llvm.minnum.f64", fn_type, Some(Linkage::External))
+        });
+        *self.min.get_or_insert(f)
+    }
+
+    pub fn max(&mut self) -> FunctionValue<'ctx> {
+        let f = self.max.unwrap_or_else(|| {
+            let t_f64 = self.ctx.f64_type();
+            let fn_type = t_f64.fn_type(&[t_f64.into(), t_f64.into()], false);
+            self.module.add_function("llvm.maxnum.f64", fn_type, Some(Linkage::External))
+        });
+        *self.max.get_or_insert(f)
+    }
+
+    pub fn abs(&mut self) -> FunctionValue<'ctx> {
+        let f = self.abs.unwrap_or_else(|| {
+            let t_f64 = self.ctx.f64_type();
+            let fn_type = t_f64.fn_type(&[t_f64.into()], false);
+            self.module.add_function("llvm.fabs.f64", fn_type, Some(Linkage::External))
+        });
+        *self.abs.get_or_insert(f)
+    }
+
     pub fn new(ctx: &'ctx Context, module: Rc<Module<'ctx>>, builder: Rc<Builder<'ctx>>) -> Self {
         Self {
             ctx, module, builder,
             _printf: None, print_float: None, println_float: None, print_str: None, println_str: None,
-            sqrt: None,
+            sqrt: None, min: None, max: None, abs: None,
         }
     }
 }
