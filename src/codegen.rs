@@ -47,6 +47,7 @@ pub struct Compiler<'ctx> {
     builder: Rc<Builder<'ctx>>,
     builtins: Builtins<'ctx>,
     sym: SymbolTable<'ctx>,
+    inside_loop: bool,
     current_fp: Option<FunctionValue<'ctx>>,
 }
 
@@ -59,6 +60,7 @@ impl<'ctx> Compiler<'ctx> {
         Self {
             ctx, module, builder, builtins,
             sym: SymbolTable::new(),
+            inside_loop: false,
             current_fp: None,
         }
     }
@@ -90,9 +92,29 @@ impl<'ctx> Compiler<'ctx> {
         let re1 = self.builder.build_float_mul(lval.re, rval.re, "tmp_mul_re1");
         let re2 = self.builder.build_float_mul(lval.im, rval.im, "tmp_mul_re2");
         let re = self.builder.build_float_sub(re1, re2, "tmp_mul_re");
+
         let im1 = self.builder.build_float_mul(lval.re, rval.im, "tmp_mul_im1");
         let im2 = self.builder.build_float_mul(lval.im, rval.re, "tmp_mul_im2");
         let im = self.builder.build_float_add(im1, im2, "tmp_mul_im");
+
+        ComplexValue { re, im }
+    }
+
+    fn complex_div(&self, lval: ComplexValue<'ctx>, rval: ComplexValue<'ctx>) -> ComplexValue<'ctx> {
+        let re1 = self.builder.build_float_mul(lval.re, rval.re, "tmp_div_re1");
+        let re2 = self.builder.build_float_mul(lval.im, rval.im, "tmp_div_re2");
+        let re = self.builder.build_float_add(re1, re2, "tmp_div_re");
+
+        let im1 = self.builder.build_float_mul(lval.im, rval.re, "tmp_div_im1");
+        let im2 = self.builder.build_float_mul(lval.re, rval.im, "tmp_div_im2");
+        let im = self.builder.build_float_sub(im1, im2, "tmp_div_im");
+
+        let c2 = self.builder.build_float_mul(rval.re, rval.re, "tmp_div_c2");
+        let d2 = self.builder.build_float_mul(rval.im, rval.im, "tmp_div_d2");
+        let denom = self.builder.build_float_add(c2, d2, "tmp_div_denom");
+        
+        let re = self.builder.build_float_div(re, denom, "tmp_div_re_final");
+        let im = self.builder.build_float_div(im, denom, "tmp_div_im_final");
         ComplexValue { re, im }
     }
 
@@ -166,7 +188,7 @@ impl<'ctx> Compiler<'ctx> {
                     BinOp::Times     => Ok(self.complex_mul(lval, rval)),
                     BinOp::Equals    => self.complex_cmp(pos, FloatPredicate::OEQ, lval, rval),
                     BinOp::NotEquals => self.complex_cmp(pos, FloatPredicate::ONE, lval, rval),
-                    BinOp::Divide    => Err(LocatedCompileError::not_yet_impl(pos, "`/`")),
+                    BinOp::Divide    => Ok(self.complex_div(lval, rval)),
                     BinOp::Remainder => Err(LocatedCompileError::not_yet_impl(pos, "`%`")),
                     BinOp::Power     => Err(LocatedCompileError::not_yet_impl(pos, "`**`")),
                 }
@@ -272,6 +294,48 @@ impl<'ctx> Compiler<'ctx> {
             Statement::PrintLit(val) => self.build_print_str(val),
             Statement::PrintLitLn(val) => self.build_println_str(val),
             Statement::Assign(id, expr) => self.build_assign(pos, id, expr),
+            Statement::AddAssign(id, rhs) =>
+                self.build_assign(pos, id.clone(), 
+                    Located::new(Expr::BinOp(
+                        BinOp::Plus,
+                        Box::new((Located::new(Expr::Id(id), pos), rhs))), pos)),
+            Statement::SubAssign(id, rhs) =>
+                self.build_assign(pos, id.clone(), 
+                    Located::new(Expr::BinOp(
+                        BinOp::Minus,
+                        Box::new((Located::new(Expr::Id(id), pos), rhs))), pos)),
+            Statement::MulAssign(id, rhs) =>
+                self.build_assign(pos, id.clone(), 
+                    Located::new(Expr::BinOp(
+                        BinOp::Times,
+                        Box::new((Located::new(Expr::Id(id), pos), rhs))), pos)),
+            Statement::DivAssign(id, rhs) =>
+                self.build_assign(pos, id.clone(), 
+                    Located::new(Expr::BinOp(
+                        BinOp::Divide,
+                        Box::new((Located::new(Expr::Id(id), pos), rhs))), pos)),
+            Statement::ModAssign(id, rhs) =>
+                self.build_assign(pos, id.clone(), 
+                    Located::new(Expr::BinOp(
+                        BinOp::Remainder,
+                        Box::new((Located::new(Expr::Id(id), pos), rhs))), pos)),
+            // Statement::If(_, _) => todo!(),
+            // Statement::IfElse(_, _, _) => todo!(),
+            // Statement::While(_, _) => todo!(),
+            Statement::Break => {
+                if !self.inside_loop {
+                    Err(LocatedCompileError::not_inside_loop(Located::new("break".to_owned(), pos)))
+                } else {
+                    Err(LocatedCompileError::not_yet_impl(pos, format!("statement: {:?}", statement)))
+                }
+            },
+            Statement::Continue => {
+                if !self.inside_loop {
+                    Err(LocatedCompileError::not_inside_loop(Located::new("continue".to_owned(), pos)))
+                } else {
+                    Err(LocatedCompileError::not_yet_impl(pos, format!("statement: {:?}", statement)))
+                }
+            },
             _ => Err(LocatedCompileError::not_yet_impl(pos, format!("statement: {:?}", statement))),
         }
     }

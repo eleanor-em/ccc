@@ -1,8 +1,5 @@
 fn main() {
-    let mut x = 3 + -2i;
-    println x;
-    println x^;
-    x = 1 + i;
-    println x^ * 2;
-    println |x|;
+    println (3 - i) / (2 - 2i);
+    println (-3 + 5i) / (-3 + i);
+    println (2 + 6i) / (4 + i);
 }

@@ -24,6 +24,7 @@ const RESERVED_WORDS: &[&str] = &[
     "return",
     "pi",
     "tau",
+    "exp",
 ];
 
 #[derive(Debug, Clone, Copy)]

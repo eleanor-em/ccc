@@ -102,12 +102,13 @@ impl InternalError {
 
 #[derive(Debug)]
 pub enum CompileError {
+    Immutable(String),
     Internal(InternalError),
     NoMain,
     NotYetImplemented(String),
+    NotInsideLoop(String),
     UnknownSymbol(String),
     Unsupported(String),
-    Immutable(String),
 }
 
 impl fmt::Display for CompileError {
@@ -141,7 +142,8 @@ impl fmt::Display for LocatedCompileError {
             CompileError::NotYetImplemented(msg)
                 | CompileError::UnknownSymbol(msg)
                 | CompileError::Unsupported(msg)
-                | CompileError::Immutable(msg) => {
+                | CompileError::Immutable(msg)
+                | CompileError::NotInsideLoop(msg) => {
                 write!(f, "{}", msg)
             },
         }
@@ -171,6 +173,15 @@ impl LocatedCompileError {
 
     fn with_secondary(pos: Location, err: CompileError, secondary_msg: String, secondary_pos: Location) -> Self {
         Self { pos: Some(pos), err, secondary_msg: Some(secondary_msg), secondary_pos: Some(secondary_pos) }
+    }
+
+    pub fn not_inside_loop(id: Located<String>) -> LocatedCompileError {
+        Self {
+            pos: Some(id.pos()),
+            err: CompileError::NotInsideLoop(format!("found `{}` statement but there is no enclosing loop", id.borrow_val())),
+            secondary_msg: Some(format!("`{}` is only allowed inside a loop", id.val())),
+            secondary_pos: None,
+        }
     }
 
     pub fn not_yet_impl<T: fmt::Display>(pos: Location, meta: T) -> LocatedCompileError {

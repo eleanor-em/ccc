@@ -29,7 +29,7 @@ impl<'ctx> Builtins<'ctx> {
         let f = self.print_float.unwrap_or_else(|| {
             let t_f64 = self.ctx.f64_type();
             let fn_type = self.ctx.void_type().fn_type(&[t_f64.into(), t_f64.into()], false);
-            let f = self.module.add_function(".print_int", fn_type, None);
+            let f = self.module.add_function(".print_float", fn_type, None);
             let block = self.ctx.append_basic_block(f, "entry");
             self.builder.position_at_end(block);
             let printf_str = self.builder.build_global_string_ptr("%.2f + %.2fi", ".int_format");
@@ -47,10 +47,10 @@ impl<'ctx> Builtins<'ctx> {
         let f = self.println_float.unwrap_or_else(|| {
             let t_f64 = self.ctx.f64_type();
             let fn_type = self.ctx.void_type().fn_type(&[t_f64.into(), t_f64.into()], false);
-            let f = self.module.add_function(".println_int", fn_type, None);
+            let f = self.module.add_function(".println_float", fn_type, None);
             let block = self.ctx.append_basic_block(f, "entry");
             self.builder.position_at_end(block);
-            let printf_str = self.builder.build_global_string_ptr("%.2f + %.2fi\n", ".ln_int_format");
+            let printf_str = self.builder.build_global_string_ptr("%.2f + %.2fi\n", ".ln_float_format");
             let re = f.get_nth_param(0).unwrap().into_float_value();
             let im = f.get_nth_param(1).unwrap().into_float_value();
             self.builder.build_call(printf, &[printf_str.as_pointer_value().into(), re.into(), im.into()], "call");
