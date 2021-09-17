@@ -15,6 +15,9 @@ pub struct Builtins<'ctx> {
     min: Option<FunctionValue<'ctx>>,
     max: Option<FunctionValue<'ctx>>,
     abs: Option<FunctionValue<'ctx>>,
+    log: Option<FunctionValue<'ctx>>,
+    cos: Option<FunctionValue<'ctx>>,
+    sin: Option<FunctionValue<'ctx>>,
 }
 
 impl<'ctx> Builtins<'ctx> {
@@ -133,11 +136,38 @@ impl<'ctx> Builtins<'ctx> {
         *self.abs.get_or_insert(f)
     }
 
+    pub fn log(&mut self) -> FunctionValue<'ctx> {
+        let f = self.log.unwrap_or_else(|| {
+            let t_f64 = self.ctx.f64_type();
+            let fn_type = t_f64.fn_type(&[t_f64.into()], false);
+            self.module.add_function("llvm.log.f64", fn_type, Some(Linkage::External))
+        });
+        *self.log.get_or_insert(f)
+    }
+
+    pub fn cos(&mut self) -> FunctionValue<'ctx> {
+        let f = self.cos.unwrap_or_else(|| {
+            let t_f64 = self.ctx.f64_type();
+            let fn_type = t_f64.fn_type(&[t_f64.into()], false);
+            self.module.add_function("llvm.cos.f64", fn_type, Some(Linkage::External))
+        });
+        *self.cos.get_or_insert(f)
+    }
+
+    pub fn sin(&mut self) -> FunctionValue<'ctx> {
+        let f = self.sin.unwrap_or_else(|| {
+            let t_f64 = self.ctx.f64_type();
+            let fn_type = t_f64.fn_type(&[t_f64.into()], false);
+            self.module.add_function("llvm.sin.f64", fn_type, Some(Linkage::External))
+        });
+        *self.sin.get_or_insert(f)
+    }
+
     pub fn new(ctx: &'ctx Context, module: Rc<Module<'ctx>>, builder: Rc<Builder<'ctx>>) -> Self {
         Self {
             ctx, module, builder,
             _printf: None, print_float: None, println_float: None, print_str: None, println_str: None,
-            sqrt: None, min: None, max: None, abs: None,
+            sqrt: None, min: None, max: None, abs: None, log: None, cos: None, sin: None,
         }
     }
 }

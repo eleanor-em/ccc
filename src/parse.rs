@@ -173,6 +173,7 @@ fn exp_factor(input: Span) -> IResult<Located<Expr>> {
     let (input, result) = many0(preceded(ws_tag("**"), negate))(input)?;
     
     let mut iter = result.into_iter().rev();
+
     if let Some(mut expr) = iter.next() {
         for next in iter {
             let left = next.pos();

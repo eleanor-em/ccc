@@ -48,7 +48,10 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { accurate_div: false, newton_rhapson_passes: 10 }
+        Self {
+            accurate_div: false,
+            newton_rhapson_passes: 10
+        }
     }
 }
 
@@ -61,6 +64,7 @@ pub struct Compiler<'ctx> {
     sym: SymbolTable<'ctx>,
     inside_loop: bool,
     current_fp: Option<FunctionValue<'ctx>>,
+    current_block: Option<BasicBlock<'ctx>>,
 }
 
 impl<'ctx> Compiler<'ctx> {
@@ -74,6 +78,7 @@ impl<'ctx> Compiler<'ctx> {
             sym: SymbolTable::new(),
             inside_loop: false,
             current_fp: None,
+            current_block: None,
         }
     }
 
@@ -81,23 +86,18 @@ impl<'ctx> Compiler<'ctx> {
         self.current_fp.ok_or_else(|| InternalError::invalid_state("no active function"))
     }
 
-    fn get_entry_block(&self) -> Result<BasicBlock<'ctx>, LocatedCompileError> {
-        self.get_fp()?.get_first_basic_block()
-            .ok_or_else(|| InternalError::invalid_state("no blocks in active function"))
-    }
-
-    fn move_to_entry(&mut self) -> Result<(), LocatedCompileError> {
-        let entry = self.get_entry_block()?;
-        match entry.get_first_instruction() {
-            Some(ins) => self.builder.position_before(&ins),
-            None => self.builder.position_at_end(entry),
-        }
-        Ok(())
+    fn get_block(&self) -> Result<BasicBlock<'ctx>, LocatedCompileError> {
+        self.current_block.ok_or_else(|| InternalError::invalid_state("no blocks in active function"))
     }
 
     fn move_to_end(&mut self) -> Result<(), LocatedCompileError> {
-        self.builder.position_at_end(self.get_entry_block()?);
+        self.builder.position_at_end(self.get_block()?);
         Ok(())
+    }
+
+    fn set_and_move_block(&mut self, block: BasicBlock<'ctx>) -> Result<(), LocatedCompileError> {
+        self.current_block = Some(block);
+        self.move_to_end()
     }
 
     fn complex_mul(&self, lval: ComplexValue<'ctx>, rval: ComplexValue<'ctx>) -> ComplexValue<'ctx> {
@@ -131,6 +131,7 @@ impl<'ctx> Compiler<'ctx> {
     }
 
     // This _may_ turn out to be more accurate for certain inputs.
+    #[allow(clippy::many_single_char_names)]
     fn complex_div_accurate(&mut self, lval: ComplexValue<'ctx>, rval: ComplexValue<'ctx>) -> Result<ComplexValue<'ctx>, LocatedCompileError> {
         let fabs = self.builtins.abs();
         let fmin = self.builtins.min();
@@ -181,14 +182,14 @@ impl<'ctx> Compiler<'ctx> {
         let x = self.builder.build_bitcast(i, self.ctx.f64_type(), "tmp_itof")
             .into_float_value();
         // Newton-Rhapson iteration
-        let mut y = x.clone();
+        let mut y = x;
         let mut x = self.builder.build_float_mul(y, y, "tmp_nr1");
         x = self.builder.build_float_mul(x2, x, "tmp_nr2");
         x = self.builder.build_float_sub(self.ctx.f64_type().const_float(1.5), x, "tmp_nr3");
         x = self.builder.build_float_mul(y, x, "tmp_nr4");
 
         for _ in 1..self.config.newton_rhapson_passes {
-            y = x.clone();
+            y = x;
             x = self.builder.build_float_mul(y, y, "tmp_nr1");
             x = self.builder.build_float_mul(x2, x, "tmp_nr2");
             x = self.builder.build_float_sub(self.ctx.f64_type().const_float(1.5), x, "tmp_nr3");
@@ -312,13 +313,42 @@ impl<'ctx> Compiler<'ctx> {
                     UnOp::Modulus   => self.complex_modulus(val),
                 }
             },
-            _ => Err(LocatedCompileError::not_yet_impl(pos, format!("expression: {:?}", expr))),
+            Expr::IfElse(boxed) => {
+                let (cond, value_if, value_else) = *boxed;
+                let cond = self.build_expr(cond)?;
+
+                let then_bb = self.ctx.append_basic_block(self.get_fp()?, "then");
+                let else_bb = self.ctx.append_basic_block(self.get_fp()?, "else");
+                let cont_bb = self.ctx.append_basic_block(self.get_fp()?, "count");
+                
+                let re =  self.builder.build_float_compare(FloatPredicate::ONE, cond.re(), self.ctx.f64_type().const_zero(), "test_re");
+                let im =  self.builder.build_float_compare(FloatPredicate::ONE, cond.im(), self.ctx.f64_type().const_zero(), "test_im");
+                let cond = self.builder.build_or(re, im, "test");
+                self.builder.build_conditional_branch(cond, then_bb, else_bb);
+
+                self.set_and_move_block(then_bb)?;
+                let value_if = self.build_expr(value_if)?;
+                self.builder.build_unconditional_branch(cont_bb);
+
+                self.set_and_move_block(else_bb)?;
+                let value_else = self.build_expr(value_else)?;
+                self.builder.build_unconditional_branch(cont_bb);
+
+                self.set_and_move_block(cont_bb)?;
+                let phi_re = self.builder.build_phi(self.ctx.f64_type(), "iftmp_re");
+                phi_re.add_incoming(&[(&value_if.re(), then_bb), (&value_else.re(), else_bb)]);
+                let phi_im = self.builder.build_phi(self.ctx.f64_type(), "iftmp_im");
+                phi_im.add_incoming(&[(&value_if.im(), then_bb), (&value_else.im(), else_bb)]);
+
+                let re = phi_re.as_basic_value().into_float_value();
+                let im = phi_im.as_basic_value().into_float_value();
+                Ok(ComplexValue { re, im })
+            }
         }
     }
 
     fn build_let_general(&mut self, pos: Location, id: Located<String>, expr: Located<Expr>, ty: Type) -> Result<(), LocatedCompileError> {
         // allocate variable memory
-        self.move_to_entry()?;
         let re = self.builder.build_alloca(self.ctx.f64_type(), &name_re(id.borrow_val()));
         let im = self.builder.build_alloca(self.ctx.f64_type(), &name_im(id.borrow_val()));
 
@@ -455,8 +485,9 @@ impl<'ctx> Compiler<'ctx> {
         let fp = self.module.add_function(&func.name, fn_type, None);
         self.sym.add_func(func.name, fp);
 
-        self.ctx.append_basic_block(fp, "entry");
+        let block = self.ctx.append_basic_block(fp, "entry");
         self.current_fp = Some(fp);
+        self.set_and_move_block(block)?;
         
         for statement in func.body {
             self.build_statement(statement)?;

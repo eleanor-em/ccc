@@ -1,0 +1,8 @@
+fn main() {
+    let a = if 0 then 1 else 0;
+    println a;
+    let b = if 1 then 1 else 0;
+    println b;
+    let c = if i then 1 else 0;
+    println c;
+}
