@@ -5,4 +5,23 @@ fn main() {
     println b;
     let c = if i then 1 else 0;
     println c;
+
+    if 1 {
+        println "in if block";
+    }
+    if 0 {
+        println "fail if block :(";
+    } else {
+        println "else block";
+    }
+    if i {
+        println "complex if block";
+    }
+
+    let mut count = 5;
+    while count {
+        print "x";
+        count -= 1;
+    }
+    println "";
 }

@@ -319,7 +319,7 @@ impl<'ctx> Compiler<'ctx> {
 
                 let then_bb = self.ctx.append_basic_block(self.get_fp()?, "then");
                 let else_bb = self.ctx.append_basic_block(self.get_fp()?, "else");
-                let cont_bb = self.ctx.append_basic_block(self.get_fp()?, "count");
+                let cont_bb = self.ctx.append_basic_block(self.get_fp()?, "cont");
                 
                 let re =  self.builder.build_float_compare(FloatPredicate::ONE, cond.re(), self.ctx.f64_type().const_zero(), "test_re");
                 let im =  self.builder.build_float_compare(FloatPredicate::ONE, cond.im(), self.ctx.f64_type().const_zero(), "test_im");
@@ -459,9 +459,75 @@ impl<'ctx> Compiler<'ctx> {
                     Located::new(Expr::BinOp(
                         BinOp::Remainder,
                         Box::new((Located::new(Expr::Id(id), pos), rhs))), pos)),
-            // Statement::If(_, _) => todo!(),
-            // Statement::IfElse(_, _, _) => todo!(),
-            // Statement::While(_, _) => todo!(),
+            Statement::If(cond, then) => {
+                let cond = self.build_expr(cond)?;
+
+                let then_bb = self.ctx.append_basic_block(self.get_fp()?, "then");
+                let cont_bb = self.ctx.append_basic_block(self.get_fp()?, "cont");
+                
+                let re =  self.builder.build_float_compare(FloatPredicate::ONE, cond.re(), self.ctx.f64_type().const_zero(), "test_re");
+                let im =  self.builder.build_float_compare(FloatPredicate::ONE, cond.im(), self.ctx.f64_type().const_zero(), "test_im");
+                let cond = self.builder.build_or(re, im, "test");
+                self.builder.build_conditional_branch(cond, then_bb, cont_bb);
+
+                self.set_and_move_block(then_bb)?;
+                for statement in then {
+                    self.build_statement(statement)?;
+                }
+                self.builder.build_unconditional_branch(cont_bb);
+                self.set_and_move_block(cont_bb)?;
+                Ok(())
+            },
+            Statement::IfElse(cond, then_st, else_st) => {
+                let cond = self.build_expr(cond)?;
+
+                let then_bb = self.ctx.append_basic_block(self.get_fp()?, "then");
+                let else_bb = self.ctx.append_basic_block(self.get_fp()?, "else");
+                let cont_bb = self.ctx.append_basic_block(self.get_fp()?, "cont");
+                
+                let re =  self.builder.build_float_compare(FloatPredicate::ONE, cond.re(), self.ctx.f64_type().const_zero(), "test_re");
+                let im =  self.builder.build_float_compare(FloatPredicate::ONE, cond.im(), self.ctx.f64_type().const_zero(), "test_im");
+                let cond = self.builder.build_or(re, im, "test");
+                self.builder.build_conditional_branch(cond, then_bb, else_bb);
+
+                self.set_and_move_block(then_bb)?;
+                for statement in then_st {
+                    self.build_statement(statement)?;
+                }
+                self.builder.build_unconditional_branch(cont_bb);
+
+                self.set_and_move_block(else_bb)?;
+                for statement in else_st {
+                    self.build_statement(statement)?;
+                }
+                self.builder.build_unconditional_branch(cont_bb);
+                self.set_and_move_block(cont_bb)?;
+                Ok(())
+            },
+            Statement::While(cond, body) => {
+                let test_bb = self.ctx.append_basic_block(self.get_fp()?, "test");
+                let body_bb = self.ctx.append_basic_block(self.get_fp()?, "body");
+                let cont_bb = self.ctx.append_basic_block(self.get_fp()?, "cont");
+
+                self.builder.build_unconditional_branch(test_bb);
+                self.set_and_move_block(test_bb)?;
+                let cond = self.build_expr(cond)?;
+                
+                let re =  self.builder.build_float_compare(FloatPredicate::ONE, cond.re(), self.ctx.f64_type().const_zero(), "test_re");
+                let im =  self.builder.build_float_compare(FloatPredicate::ONE, cond.im(), self.ctx.f64_type().const_zero(), "test_im");
+                let cond = self.builder.build_or(re, im, "test_val");
+                self.builder.build_conditional_branch(cond, body_bb, cont_bb);
+
+
+                self.set_and_move_block(body_bb)?;
+                for statement in body {
+                    self.build_statement(statement)?;
+                }
+                self.builder.build_unconditional_branch(test_bb);
+
+                self.set_and_move_block(cont_bb)?;
+                Ok(())
+            },
             Statement::Break => {
                 if !self.inside_loop {
                     Err(LocatedCompileError::not_inside_loop(Located::new("break".to_owned(), pos)))
@@ -476,7 +542,6 @@ impl<'ctx> Compiler<'ctx> {
                     Err(LocatedCompileError::not_yet_impl(pos, format!("statement: {:?}", statement)))
                 }
             },
-            _ => Err(LocatedCompileError::not_yet_impl(pos, format!("statement: {:?}", statement))),
         }
     }
 
@@ -499,8 +564,8 @@ impl<'ctx> Compiler<'ctx> {
 
     /// Prints the compiled LLVM IR to a file.
     fn print_to_file<P: AsRef<Path>>(&self, dest: P) -> Result<(), LocatedCompileError> {
-        self.module.verify()?;
         self.module.print_to_file(dest)?;
+        self.module.verify()?;
         Ok(())
     }
 
